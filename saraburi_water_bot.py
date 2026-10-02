@@ -1,335 +1,477 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-บอทแจ้งเตือนระดับน้ำจังหวัดสระบุรี ผ่าน Telegram
-แหล่งข้อมูล: ThaiWater (สสน./HII) public endpoint waterlevel_load
-
-วิธีใช้
-  export TELEGRAM_BOT_TOKEN="123456:ABC..."
-  export TELEGRAM_CHAT_ID="-100xxxxxxxxxx"   # ห้อง/กลุ่ม/แชตส่วนตัว
-  python3 saraburi_water_bot.py --debug      # ดูโครงสร้างข้อมูลจริง 1 สถานี (ตรวจชื่อ field)
-  python3 saraburi_water_bot.py --summary    # ส่งสรุปทุกสถานีเข้า Telegram
-  python3 saraburi_water_bot.py              # ตรวจ + แจ้งเตือนเมื่อสถานะเปลี่ยน (ใช้กับ cron)
-
-cron ตัวอย่าง (ทุก 15 นาที):
-  */15 * * * * cd /path/to && /usr/bin/python3 saraburi_water_bot.py >> bot.log 2>&1
-  0 7 * * *    cd /path/to && /usr/bin/python3 saraburi_water_bot.py --summary
+saraburi_water_bot.py (v2)
+- ระดับน้ำสถานีโทรมาตร จ.สระบุรี
+- เขื่อนป่าสักชลสิทธิ์
+- เตือนน้ำขึ้นเร็วผิดปกติ
+- เตือนข้อมูลสถานีค้าง
+- เขียน docs/data.json สำหรับแดชบอร์ด
+โหมด: summary | alert | debug
 """
-import html
-import json
+
 import os
 import sys
-import time
+import json
+import html
+from datetime import datetime, timedelta, timezone
 
 import requests
 
-API_URL = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load"
-PROVINCE_CODE = "19"          # สระบุรี
-PROVINCE_NAME = "สระบุรี"
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
-ALERT_FROM_LEVEL = 4          # แจ้งเตือนเมื่อ >= น้ำมาก
+TH = timezone(timedelta(hours=7))
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-    "Referer": "https://www.thaiwater.net/",
-    "Accept": "application/json",
-}
+API_WL = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load"
+API_DAM = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/dam_detail"
+TIMEOUT = 30
 
-# ตรวจสอบกับ --debug ว่าตรงกับข้อมูลจริงหรือไม่
-LEVELS = {
-    1: ("🟤", "น้ำน้อยวิกฤติ"),
-    2: ("🟡", "น้ำน้อย"),
-    3: ("🟢", "ปกติ"),
-    4: ("🔵", "น้ำมาก (เฝ้าระวัง)"),
-    5: ("🔴", "ล้นตลิ่ง (อันตราย)"),
-}
+PROVINCE = "สระบุรี"
+DAM_KEYWORDS = ["ป่าสักชลสิทธิ์"]        # เพิ่มชื่อเขื่อนอื่นได้ เช่น "พระราม 6"
 
+RISE_1H_M = 0.30                          # ม./ชม.
+RISE_3H_M = 0.60                          # ม./3 ชม.
+RISE_COOLDOWN_H = 3
+STALE_HOURS = 3
+STALE_COOLDOWN_H = 12
+HISTORY_HOURS = 24
+DAM_WARN_PCT = 80.0
+DAM_CRIT_PCT = 95.0
 
-def dig(d, *paths, default=None):
-    """ดึงค่าจาก dict ซ้อนหลายชั้น ลองหลาย path ตามลำดับ เช่น 'geocode.province_code'"""
-    for path in paths:
-        cur = d
-        for key in path.split("."):
-            if isinstance(cur, dict) and key in cur:
-                cur = cur[key]
-            else:
-                cur = None
-                break
-        if cur not in (None, ""):
-            return cur
-    return default
+STATE_FILE = "state.json"
+DASH_FILE = "docs/data.json"
+
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 
-def th(v):
-    """field ชื่อมักเป็น {'th': ..., 'en': ...}"""
+# ---------------- utils ----------------
+
+def now_th():
+    return datetime.now(TH)
+
+
+def dig(obj, *keys, default=None):
+    cur = obj
+    for k in keys:
+        if isinstance(cur, dict) and k in cur:
+            cur = cur[k]
+        else:
+            return default
+    return cur if cur is not None else default
+
+
+def th_text(v, default="-"):
     if isinstance(v, dict):
-        return v.get("th") or v.get("en") or ""
-    return v or ""
+        return v.get("th") or v.get("en") or default
+    return v or default
 
 
 def to_float(v):
     try:
+        if v is None or v == "":
+            return None
         return float(v)
     except (TypeError, ValueError):
         return None
 
 
-def extract_rows(body):
-    """หา list ของ dict (รายการสถานี) ในผลลัพธ์ ไม่ว่าจะซ้อนกี่ชั้น เลือก list ที่ยาวที่สุด"""
-    best = []
-
-    def walk(node):
-        nonlocal best
-        if isinstance(node, list):
-            if node and all(isinstance(x, dict) for x in node) and len(node) > len(best):
-                best = node
-            for x in node[:3]:
-                walk(x)
-        elif isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-
-    walk(body)
-    return best
-
-
-def http_get_json(params=None):
-    for attempt in range(3):
-        r = requests.get(API_URL, headers=HEADERS, params=params, timeout=30)
-        if r.status_code == 429:  # ต้นทางจำกัดอัตราเรียก ให้รอแล้วลองใหม่
-            wait = int(r.headers.get("Retry-After", 30 * (attempt + 1)))
-            print(f"429 Too Many Requests, รอ {wait}s", file=sys.stderr)
-            time.sleep(min(wait, 120))
+def parse_dt(s):
+    if not s:
+        return None
+    s = str(s).replace("T", " ").split(".")[0].split("+")[0].strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=TH)
+        except ValueError:
             continue
-        r.raise_for_status()
-        return r.json()
-    raise RuntimeError("ThaiWater ตอบ 429 ต่อเนื่อง ลองใหม่รอบหน้า")
+    return None
 
 
-def province_values(node, out=None):
-    """รวบรวมค่าทุกอย่างที่อยู่ใต้ key ที่มีคำว่า province (รหัสหรือชื่อ ไม่ว่าจะซ้อนกี่ชั้น)"""
-    out = [] if out is None else out
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if "province" in str(k).lower():
-                if isinstance(v, dict):
-                    out.extend(str(x) for x in v.values())
-                else:
-                    out.append(str(v))
-            else:
-                province_values(v, out)
-    return out
+def fmt(v, nd=2, unit=""):
+    if v is None:
+        return "-"
+    return f"{v:,.{nd}f}{unit}"
 
 
-def geocode_values(node, out=None):
-    out = [] if out is None else out
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if "geocode" in str(k).lower() and isinstance(v, (str, int)):
-                out.append(str(v))
-            else:
-                geocode_values(v, out)
-    return out
-
-
-def is_saraburi(rec):
-    if not isinstance(rec, dict):
-        return False
-    vals = province_values(rec)
-    if PROVINCE_CODE in vals or any(PROVINCE_NAME in v for v in vals):
-        return True
-    # geocode ขึ้นต้นด้วยรหัสจังหวัด 2 หลัก (เช่น 190101)
-    return any(g.startswith(PROVINCE_CODE) and len(g) >= 2 for g in geocode_values(rec))
-
-
-STATION_ID_KEYS = ("station_id", "tele_station_id", "stationid", "station")
-
-
-def index_by_id(section):
-    rows = extract_rows(section)
-    return {str(r["id"]): r for r in rows if isinstance(r, dict) and r.get("id") is not None}
-
-
-def join_rows(body):
-    """ข้อมูลจริงเป็นแบบ relational: waterlevel_data อ้างอิง station ด้วย id จึงต้อง join ก่อน"""
-    if not (isinstance(body, dict) and "waterlevel_data" in body):
-        return extract_rows(body)
-    stations = index_by_id(body.get("station"))
-    out = []
-    for row in extract_rows(body.get("waterlevel_data")):
-        sid = next((str(row[k]) for k in STATION_ID_KEYS
-                    if row.get(k) is not None and not isinstance(row[k], dict)), None)
-        st = stations.get(sid, {}) if sid else {}
-        merged = {**st, **{k: v for k, v in row.items() if k != "id"}}
-        if sid:
-            merged["id"] = sid
-        if st:
-            merged["station"] = st
-        out.append(merged)
-    return out
-
-
-def fetch_raw():
-    """ลองกรองที่ต้นทางด้วย province_code ก่อน ถ้าไม่ได้ผลค่อยดึงทั้งประเทศแล้วกรองเอง"""
-    rows, body = [], None
-    for params in ({"province_code": PROVINCE_CODE}, None):
-        body = http_get_json(params)
-        rows = join_rows(body)
-        if any(is_saraburi(r) for r in rows):
-            return rows, body
-    return rows, body
-
-
-def normalize(rec):
-    station = rec.get("station", {}) if isinstance(rec.get("station"), dict) else {}
-    sid = str(dig(rec, "station.id", "station_id", "id", default=""))
-    name = th(dig(rec, "station.tele_station_name", "tele_station_name", "station_name", default=sid))
-    river = th(dig(rec, "river_name", "station.river_name", default=""))
-    amphoe = th(dig(rec, "geocode.amphoe_name", "amphoe_name", default=""))
-    wl = to_float(dig(rec, "waterlevel_msl", "waterlevel_value", "water_level"))
-    bank = to_float(dig(rec, "station.min_bank", "min_bank", "bank_level", "bank"))
-    level = dig(rec, "situation_level", "station.situation_level")
-    level = int(level) if str(level).isdigit() else None
-    # ถ้าไม่มี situation_level ให้ประเมินเองจากตลิ่ง
-    if level is None and wl is not None and bank:
-        level = 5 if wl >= bank else 4 if wl >= bank - 1.0 else 3
-    return {
-        "id": sid,
-        "name": name or sid,
-        "river": river,
-        "amphoe": amphoe,
-        "wl": wl,
-        "bank": bank,
-        "level": level,
-        "pct": to_float(dig(rec, "storage_percent")),
-        "prev": to_float(dig(rec, "waterlevel_msl_previous")),
-        "time": dig(rec, "waterlevel_datetime", "datetime", "station.waterlevel_datetime", default=""),
-    }
-
-
-def fmt_station(s, with_time=True):
-    emoji, label = LEVELS.get(s["level"], ("⚪", "ไม่ทราบสถานะ"))
-    lines = [f"{emoji} <b>{html.escape(s['name'])}</b>"]
-    loc = " ".join(x for x in [s["river"], f"อ.{s['amphoe']}" if s["amphoe"] else ""] if x)
-    if loc:
-        lines.append(html.escape(loc))
-    if s["wl"] is not None:
-        lines.append(f"ระดับน้ำ {s['wl']:.2f} ม.รทก.")
-        if s["bank"]:
-            gap = s["bank"] - s["wl"]
-            where = f"ต่ำกว่าตลิ่ง {gap:.2f} ม." if gap >= 0 else f"สูงกว่าตลิ่ง {-gap:.2f} ม."
-            pct = f" ({s['pct']:.0f}% ของตลิ่ง)" if s["pct"] is not None else ""
-            lines.append(f"ตลิ่ง {s['bank']:.2f} ม. → {where}{pct}")
-        if s["prev"] is not None:
-            d = s["wl"] - s["prev"]
-            trend = "⬆️ เพิ่มขึ้น" if d > 0.005 else "⬇️ ลดลง" if d < -0.005 else "➡️ คงที่"
-            lines.append(f"แนวโน้ม: {trend} ({d:+.2f} ม.จากค่าก่อนหน้า)")
-    lines.append(f"สถานะ: {label}")
-    if with_time and s["time"]:
-        lines.append(f"ข้อมูลเมื่อ {html.escape(str(s['time']))}")
-    return "\n".join(lines)
-
-
-def send_telegram(text):
-    token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    # Telegram จำกัด 4096 ตัวอักษรต่อข้อความ
-    chunks, cur = [], ""
-    for block in text.split("\n\n"):
-        if len(cur) + len(block) + 2 > 3800:
-            chunks.append(cur)
-            cur = ""
-        cur += block + "\n\n"
-    if cur.strip():
-        chunks.append(cur)
-    for c in chunks:
-        r = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": c.strip(), "parse_mode": "HTML",
-                  "disable_web_page_preview": True},
-            timeout=30,
-        )
-        r.raise_for_status()
-
+# ---------------- state ----------------
 
 def load_state():
     try:
-        with open(STATE_FILE, encoding="utf-8") as f:
-            return json.load(f)
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            st = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        st = {}
+    st.setdefault("status", {})       # สถานะล่าสุดต่อสถานี
+    st.setdefault("history", {})      # ประวัติระดับน้ำ [[epoch, level], ...]
+    st.setdefault("last_rise", {})    # epoch ของการเตือนน้ำขึ้นเร็วครั้งล่าสุด
+    st.setdefault("stale", {})        # {station: epoch ที่เตือนค้างครั้งล่าสุด}
+    st.setdefault("dam_status", {})
+    return st
 
 
-def save_state(state):
+def save_state(st):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=1)
+        json.dump(st, f, ensure_ascii=False, indent=1)
 
 
-def get_stations():
-    rows, body = fetch_raw()
-    return [normalize(r) for r in rows if is_saraburi(r)], rows, body
+# ---------------- telegram ----------------
 
+def send_telegram(text):
+    if not TOKEN or not CHAT_ID:
+        print("ไม่พบ TELEGRAM_BOT_TOKEN หรือ TELEGRAM_CHAT_ID")
+        return False
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    ok = True
+    for i in range(0, len(text), 3800):
+        chunk = text[i:i + 3800]
+        try:
+            r = requests.post(
+                url,
+                json={
+                    "chat_id": CHAT_ID,
+                    "text": chunk,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=TIMEOUT,
+            )
+            r.raise_for_status()
+        except requests.RequestException as e:
+            print(f"ส่ง Telegram ไม่สำเร็จ: {e}")
+            ok = False
+    return ok
+
+
+# ---------------- fetch ----------------
+
+def fetch_stations():
+    r = requests.get(API_WL, timeout=TIMEOUT, headers={"User-Agent": "saraburi-water-bot/2.0"})
+    r.raise_for_status()
+    payload = r.json()
+    rows = payload.get("data")
+    if isinstance(rows, dict):
+        rows = rows.get("data", [])
+    out = []
+    for row in rows or []:
+        prov = th_text(dig(row, "geocode", "province_name"), "")
+        if PROVINCE not in str(prov):
+            continue
+        st = row.get("station", {}) or {}
+        name = th_text(st.get("tele_station_name"), th_text(row.get("station_name"), "ไม่ทราบชื่อ"))
+        wl = to_float(row.get("waterlevel_msl"))
+        bank = to_float(st.get("min_bank")) or to_float(row.get("min_bank"))
+        ground = to_float(st.get("ground_level")) or to_float(row.get("ground_level"))
+        dt = parse_dt(row.get("waterlevel_datetime") or row.get("datetime"))
+        pct = None
+        if wl is not None and bank is not None and ground is not None and bank > ground:
+            pct = (wl - ground) / (bank - ground) * 100.0
+        out.append({
+            "key": str(st.get("id") or row.get("id") or name),
+            "name": name,
+            "amphoe": th_text(dig(row, "geocode", "amphoe_name"), "-"),
+            "level": wl,
+            "bank": bank,
+            "ground": ground,
+            "percent": pct,
+            "status": classify(pct),
+            "datetime": dt.strftime("%Y-%m-%d %H:%M") if dt else None,
+            "epoch": int(dt.timestamp()) if dt else None,
+        })
+    out.sort(key=lambda s: s["name"])
+    return out
+
+
+def classify(pct):
+    if pct is None:
+        return "ไม่มีข้อมูล"
+    if pct >= 100:
+        return "ล้นตลิ่ง"
+    if pct >= 70:
+        return "น้ำมาก"
+    if pct >= 30:
+        return "ปกติ"
+    return "น้ำน้อย"
+
+
+def icon(status):
+    return {
+        "ล้นตลิ่ง": "🔴",
+        "น้ำมาก": "🟠",
+        "ปกติ": "🟢",
+        "น้ำน้อย": "🔵",
+    }.get(status, "⚪")
+
+
+def fetch_dams():
+    r = requests.get(API_DAM, timeout=TIMEOUT, headers={"User-Agent": "saraburi-water-bot/2.0"})
+    r.raise_for_status()
+    payload = r.json()
+    rows = payload.get("data")
+    if isinstance(rows, dict):
+        rows = rows.get("data", [])
+    out = []
+    for row in rows or []:
+        name = th_text(dig(row, "dam", "dam_name"), "")
+        if not any(k in str(name) for k in DAM_KEYWORDS):
+            continue
+        dt = parse_dt(row.get("dam_date"))
+        out.append({
+            "name": name,
+            "storage": to_float(row.get("dam_storage")),
+            "percent": to_float(row.get("dam_storage_percent")),
+            "inflow": to_float(row.get("dam_inflow")),
+            "released": to_float(row.get("dam_released")),
+            "uses_water": to_float(row.get("dam_uses_water")),
+            "normal_storage": to_float(dig(row, "dam", "normal_storage")),
+            "datetime": dt.strftime("%Y-%m-%d %H:%M") if dt else None,
+        })
+    return out
+
+
+# ---------------- rise detection ----------------
+
+def update_history(state, stations, now_epoch):
+    cutoff = now_epoch - HISTORY_HOURS * 3600
+    for s in stations:
+        if s["level"] is None:
+            continue
+        hist = state["history"].get(s["key"], [])
+        stamp = s["epoch"] or now_epoch
+        if not hist or hist[-1][0] != stamp:
+            hist.append([stamp, s["level"]])
+        hist = [h for h in hist if h[0] >= cutoff]
+        state["history"][s["key"]] = hist[-200:]
+
+
+def rise_over(hist, level, now_epoch, hours):
+    """คืนค่า (ระดับที่เพิ่ม, จำนวนชั่วโมงจริง) เทียบกับค่าที่ใกล้ now-hours ที่สุด"""
+    target = now_epoch - hours * 3600
+    best = None
+    for ts, lv in hist:
+        if ts >= now_epoch:
+            continue
+        gap = abs(ts - target)
+        if best is None or gap < best[0]:
+            best = (gap, ts, lv)
+    if not best:
+        return None
+    _, ts, lv = best
+    dt_h = (now_epoch - ts) / 3600.0
+    if dt_h < hours * 0.6 or dt_h > hours * 1.8:
+        return None
+    return (level - lv, dt_h)
+
+
+def check_rise(state, stations, now_epoch):
+    msgs = []
+    for s in stations:
+        if s["level"] is None:
+            continue
+        last = state["last_rise"].get(s["key"], 0)
+        if now_epoch - last < RISE_COOLDOWN_H * 3600:
+            continue
+        hist = state["history"].get(s["key"], [])
+        base = s["epoch"] or now_epoch
+        hit = None
+        r1 = rise_over(hist, s["level"], base, 1)
+        if r1 and r1[0] >= RISE_1H_M:
+            hit = ("1 ชม.", r1[0], r1[1])
+        if not hit:
+            r3 = rise_over(hist, s["level"], base, 3)
+            if r3 and r3[0] >= RISE_3H_M:
+                hit = ("3 ชม.", r3[0], r3[1])
+        if hit:
+            win, delta, hours = hit
+            msgs.append(
+                f"⚡ <b>น้ำขึ้นเร็วผิดปกติ</b>\n"
+                f"สถานี: {html.escape(s['name'])} (อ.{html.escape(s['amphoe'])})\n"
+                f"เพิ่มขึ้น <b>{fmt(delta, 2, ' ม.')}</b> ในช่วง {win} (วัดจริง {hours:.1f} ชม.)\n"
+                f"ระดับปัจจุบัน: {fmt(s['level'], 2, ' ม.รทก.')} | ตลิ่ง {fmt(s['bank'], 2, ' ม.')}\n"
+                f"สถานะ: {icon(s['status'])} {s['status']} ({fmt(s['percent'], 0, '%')} ของตลิ่ง)\n"
+                f"ข้อมูลเวลา {s['datetime'] or '-'}"
+            )
+            state["last_rise"][s["key"]] = now_epoch
+    return msgs
+
+
+# ---------------- stale detection ----------------
+
+def check_stale(state, stations, now_epoch):
+    msgs = []
+    for s in stations:
+        key = s["key"]
+        age_h = None
+        if s["epoch"]:
+            age_h = (now_epoch - s["epoch"]) / 3600.0
+        is_stale = (age_h is None) or (age_h > STALE_HOURS)
+        prev = state["stale"].get(key)
+        if is_stale:
+            if prev is None or now_epoch - prev >= STALE_COOLDOWN_H * 3600:
+                age_txt = f"{age_h:.1f} ชม." if age_h is not None else "ไม่ทราบ"
+                msgs.append(
+                    f"⏳ <b>ข้อมูลสถานีไม่อัปเดต</b>\n"
+                    f"สถานี: {html.escape(s['name'])} (อ.{html.escape(s['amphoe'])})\n"
+                    f"ข้อมูลล่าสุด: {s['datetime'] or 'ไม่มี'} (ค้างมาแล้ว {age_txt})\n"
+                    f"ค่าที่แสดงบนแดชบอร์ดอาจไม่ตรงกับความจริง"
+                )
+                state["stale"][key] = now_epoch
+        else:
+            if prev is not None:
+                msgs.append(
+                    f"✅ <b>ข้อมูลสถานีกลับมาปกติ</b>\n"
+                    f"สถานี: {html.escape(s['name'])}\n"
+                    f"ข้อมูลล่าสุด: {s['datetime']}"
+                )
+                state["stale"].pop(key, None)
+    return msgs
+
+
+# ---------------- dam alert ----------------
+
+def check_dam(state, dams):
+    msgs = []
+    for d in dams:
+        pct = d["percent"]
+        if pct is None:
+            continue
+        level = "crit" if pct >= DAM_CRIT_PCT else ("warn" if pct >= DAM_WARN_PCT else "normal")
+        prev = state["dam_status"].get(d["name"])
+        if level != prev and level != "normal":
+            mark = "🔴" if level == "crit" else "🟠"
+            msgs.append(
+                f"{mark} <b>{html.escape(d['name'])}</b>\n"
+                f"ปริมาตรเก็บกัก: {fmt(d['storage'], 2)} ล้าน ลบ.ม. ({fmt(pct, 1, '%')})\n"
+                f"น้ำไหลเข้า: {fmt(d['inflow'], 2)} | ระบายออก: {fmt(d['released'], 2)} ล้าน ลบ.ม./วัน\n"
+                f"ข้อมูลเวลา {d['datetime'] or '-'}"
+            )
+        if level != prev and level == "normal" and prev is not None:
+            msgs.append(
+                f"🟢 <b>{html.escape(d['name'])}</b> กลับสู่เกณฑ์ปกติ ({fmt(pct, 1, '%')})"
+            )
+        state["dam_status"][d["name"]] = level
+    return msgs
+
+
+# ---------------- status change alert ----------------
+
+def check_status(state, stations):
+    msgs = []
+    order = {"น้ำน้อย": 0, "ปกติ": 1, "น้ำมาก": 2, "ล้นตลิ่ง": 3}
+    for s in stations:
+        if s["status"] == "ไม่มีข้อมูล":
+            continue
+        prev = state["status"].get(s["key"])
+        if prev == s["status"]:
+            continue
+        state["status"][s["key"]] = s["status"]
+        if prev is None:
+            continue
+        if order.get(s["status"], 0) >= 2 or order.get(prev, 0) >= 2:
+            arrow = "เพิ่มขึ้น" if order.get(s["status"], 0) > order.get(prev, 0) else "ลดลง"
+            msgs.append(
+                f"{icon(s['status'])} <b>สถานะเปลี่ยน ({arrow})</b>\n"
+                f"สถานี: {html.escape(s['name'])} (อ.{html.escape(s['amphoe'])})\n"
+                f"{prev} → <b>{s['status']}</b>\n"
+                f"ระดับน้ำ {fmt(s['level'], 2, ' ม.รทก.')} | ตลิ่ง {fmt(s['bank'], 2, ' ม.')} "
+                f"({fmt(s['percent'], 0, '%')})\n"
+                f"ข้อมูลเวลา {s['datetime'] or '-'}"
+            )
+    return msgs
+
+
+# ---------------- dashboard ----------------
+
+def write_dashboard(stations, dams, now_epoch):
+    os.makedirs(os.path.dirname(DASH_FILE), exist_ok=True)
+    data = {
+        "updated": now_th().strftime("%Y-%m-%d %H:%M:%S"),
+        "stations": [
+            {
+                "name": s["name"],
+                "amphoe": s["amphoe"],
+                "level": s["level"],
+                "bank": s["bank"],
+                "percent": s["percent"],
+                "status": s["status"],
+                "datetime": s["datetime"],
+                "stale": bool(s["epoch"] is None or (now_epoch - s["epoch"]) / 3600.0 > STALE_HOURS),
+            }
+            for s in stations
+        ],
+        "dams": dams,
+    }
+    with open(DASH_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+
+
+# ---------------- messages ----------------
+
+def build_summary(stations, dams):
+    lines = [f"📊 <b>สรุปสถานการณ์น้ำ จ.สระบุรี</b>",
+             f"ณ {now_th().strftime('%d/%m/%Y %H:%M')} น.", ""]
+    for s in stations:
+        lines.append(
+            f"{icon(s['status'])} <b>{html.escape(s['name'])}</b> (อ.{html.escape(s['amphoe'])})\n"
+            f"   ระดับ {fmt(s['level'], 2, ' ม.รทก.')} / ตลิ่ง {fmt(s['bank'], 2, ' ม.')} "
+            f"= {fmt(s['percent'], 0, '%')} — {s['status']}\n"
+            f"   ข้อมูล {s['datetime'] or 'ไม่มี'}"
+        )
+    if dams:
+        lines.append("\n🏞 <b>เขื่อน</b>")
+        for d in dams:
+            lines.append(
+                f"• <b>{html.escape(d['name'])}</b>\n"
+                f"   เก็บกัก {fmt(d['storage'], 2)} ล้าน ลบ.ม. ({fmt(d['percent'], 1, '%')})\n"
+                f"   เข้า {fmt(d['inflow'], 2)} | ระบาย {fmt(d['released'], 2)} ล้าน ลบ.ม./วัน\n"
+                f"   ข้อมูล {d['datetime'] or '-'}"
+            )
+    lines.append("\nที่มา: คลังข้อมูลน้ำแห่งชาติ (ThaiWater)")
+    return "\n".join(lines)
+
+
+# ---------------- main ----------------
 
 def main():
-    stations, raw, body = get_stations()
+    mode = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("MODE", "alert")).strip().lower()
+    print(f"โหมด: {mode}")
 
-    if "--debug" in sys.argv:
-        print("โครงสร้างชั้นนอก:")
-        for k, v in (body.items() if isinstance(body, dict) else []):
-            size = len(v) if hasattr(v, "__len__") else "-"
-            print(f"  - {k}: {type(v).__name__} ({size})")
-        for name in ("waterlevel_data", "station"):
-            rows_ = extract_rows(body.get(name)) if isinstance(body, dict) else []
-            print(f"\n[{name}] จำนวนแถว {len(rows_)}")
-            if rows_:
-                print("keys:", list(rows_[0].keys()))
-                print(json.dumps(rows_[0], ensure_ascii=False)[:1500])
-        print(f"\nหลัง join: {len(raw)} แถว | ของสระบุรี: {len(stations)}")
-        sar = next((r for r in raw if is_saraburi(r)), None)
-        if sar:
-            print(json.dumps(sar, ensure_ascii=False, indent=1)[:2500])
-        print("\nหลัง normalize (10 สถานีแรก):")
-        for s_ in stations[:10]:
-            print(s_)
-        return
+    stations = fetch_stations()
+    print(f"พบสถานี จ.{PROVINCE}: {len(stations)} สถานี")
+    try:
+        dams = fetch_dams()
+    except requests.RequestException as e:
+        print(f"ดึงข้อมูลเขื่อนไม่สำเร็จ: {e}")
+        dams = []
+    print(f"พบเขื่อน: {len(dams)} แห่ง")
 
-    if not stations:
-        print("ไม่พบสถานีของสระบุรี ตรวจ field ด้วย --debug", file=sys.stderr)
-        return
-
-    if "--summary" in sys.argv:
-        stations.sort(key=lambda s: -(s["level"] or 0))
-        head = f"📊 <b>สรุประดับน้ำ จ.{PROVINCE_NAME}</b> ({len(stations)} สถานี)\n\n"
-        send_telegram(head + "\n\n".join(fmt_station(s) for s in stations))
-        return
-
-    # โหมดแจ้งเตือน: ส่งเฉพาะเมื่อสถานะข้ามเกณฑ์ขึ้น/ลง
     state = load_state()
-    alerts, cleared = [], []
-    for s in stations:
-        prev = state.get(s["id"])
-        cur = s["level"]
-        if cur is not None:
-            if cur >= ALERT_FROM_LEVEL and (prev is None or cur != prev):
-                alerts.append(s)
-            elif prev is not None and prev >= ALERT_FROM_LEVEL and cur < ALERT_FROM_LEVEL:
-                cleared.append(s)
-            state[s["id"]] = cur
+    now_epoch = int(now_th().timestamp())
+
+    alerts = []
+    alerts += check_status(state, stations)
+    alerts += check_rise(state, stations, now_epoch)
+    alerts += check_stale(state, stations, now_epoch)
+    alerts += check_dam(state, dams)
+
+    update_history(state, stations, now_epoch)
+    write_dashboard(stations, dams, now_epoch)
+
+    if mode == "debug":
+        print(build_summary(stations, dams))
+        print("\n--- การแจ้งเตือนที่จะส่ง ---")
+        print("\n\n".join(alerts) if alerts else "ไม่มี")
+        save_state(state)
+        return
+
+    if mode == "summary":
+        send_telegram(build_summary(stations, dams))
 
     if alerts:
-        alerts.sort(key=lambda s: -s["level"])
-        send_telegram(
-            f"🚨 <b>แจ้งเตือนระดับน้ำ จ.{PROVINCE_NAME}</b>\n\n"
-            + "\n\n".join(fmt_station(s) for s in alerts)
-            + "\n\n⚠️ ข้อมูลอัตโนมัติ ไม่ใช่ประกาศทางการ โปรดติดตาม ปภ./กรมชลประทาน/อบจ.-ท้องถิ่น"
-        )
-    if cleared:
-        send_telegram(
-            f"✅ <b>ระดับน้ำลดลงต่ำกว่าเกณฑ์เฝ้าระวัง</b>\n\n"
-            + "\n\n".join(fmt_station(s) for s in cleared)
-        )
+        send_telegram("\n\n".join(alerts))
+    else:
+        print("ไม่มีการแจ้งเตือนรอบนี้")
+
     save_state(state)
-    print(f"ตรวจแล้ว {len(stations)} สถานี | แจ้งเตือน {len(alerts)} | คลี่คลาย {len(cleared)}")
+    print("เสร็จสิ้น")
 
 
 if __name__ == "__main__":
