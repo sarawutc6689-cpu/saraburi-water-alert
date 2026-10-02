@@ -200,6 +200,8 @@ def normalize(rec):
         "wl": wl,
         "bank": bank,
         "level": level,
+        "pct": to_float(dig(rec, "storage_percent")),
+        "prev": to_float(dig(rec, "waterlevel_msl_previous")),
         "time": dig(rec, "waterlevel_datetime", "datetime", "station.waterlevel_datetime", default=""),
     }
 
@@ -211,10 +213,16 @@ def fmt_station(s, with_time=True):
     if loc:
         lines.append(html.escape(loc))
     if s["wl"] is not None:
-        extra = ""
+        lines.append(f"ระดับน้ำ {s['wl']:.2f} ม.รทก.")
         if s["bank"]:
-            extra = f" | ตลิ่ง {s['bank']:.2f} (ต่ำกว่าตลิ่ง {s['bank'] - s['wl']:+.2f} ม.)"
-        lines.append(f"ระดับน้ำ {s['wl']:.2f} ม.รทก.{extra}")
+            gap = s["bank"] - s["wl"]
+            where = f"ต่ำกว่าตลิ่ง {gap:.2f} ม." if gap >= 0 else f"สูงกว่าตลิ่ง {-gap:.2f} ม."
+            pct = f" ({s['pct']:.0f}% ของตลิ่ง)" if s["pct"] is not None else ""
+            lines.append(f"ตลิ่ง {s['bank']:.2f} ม. → {where}{pct}")
+        if s["prev"] is not None:
+            d = s["wl"] - s["prev"]
+            trend = "⬆️ เพิ่มขึ้น" if d > 0.005 else "⬇️ ลดลง" if d < -0.005 else "➡️ คงที่"
+            lines.append(f"แนวโน้ม: {trend} ({d:+.2f} ม.จากค่าก่อนหน้า)")
     lines.append(f"สถานะ: {label}")
     if with_time and s["time"]:
         lines.append(f"ข้อมูลเมื่อ {html.escape(str(s['time']))}")
@@ -325,4 +333,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()อ
