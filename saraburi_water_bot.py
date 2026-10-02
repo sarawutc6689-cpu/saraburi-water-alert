@@ -73,24 +73,68 @@ def to_float(v):
         return None
 
 
-def fetch_raw():
+def extract_rows(body):
+    """หา list ของ dict (รายการสถานี) ในผลลัพธ์ ไม่ว่าจะซ้อนกี่ชั้น เลือก list ที่ยาวที่สุด"""
+    best = []
+
+    def walk(node):
+        nonlocal best
+        if isinstance(node, list):
+            if node and all(isinstance(x, dict) for x in node) and len(node) > len(best):
+                best = node
+            for x in node[:3]:
+                walk(x)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+
+    walk(body)
+    return best
+
+
+def http_get_json(params=None):
     for attempt in range(3):
-        r = requests.get(API_URL, headers=HEADERS, timeout=30)
+        r = requests.get(API_URL, headers=HEADERS, params=params, timeout=30)
         if r.status_code == 429:  # ต้นทางจำกัดอัตราเรียก ให้รอแล้วลองใหม่
             wait = int(r.headers.get("Retry-After", 30 * (attempt + 1)))
             print(f"429 Too Many Requests, รอ {wait}s", file=sys.stderr)
             time.sleep(min(wait, 120))
             continue
         r.raise_for_status()
-        body = r.json()
-        return body.get("data", body) if isinstance(body, dict) else body
+        return r.json()
     raise RuntimeError("ThaiWater ตอบ 429 ต่อเนื่อง ลองใหม่รอบหน้า")
 
 
+def province_values(node, out=None):
+    """รวบรวมค่าทุกอย่างที่อยู่ใต้ key ที่มีคำว่า province (รหัสหรือชื่อ ไม่ว่าจะซ้อนกี่ชั้น)"""
+    out = [] if out is None else out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if "province" in str(k).lower():
+                if isinstance(v, dict):
+                    out.extend(str(x) for x in v.values())
+                else:
+                    out.append(str(v))
+            else:
+                province_values(v, out)
+    return out
+
+
 def is_saraburi(rec):
-    code = str(dig(rec, "geocode.province_code", "province_code", default=""))
-    name = th(dig(rec, "geocode.province_name", "province_name", default=""))
-    return code == PROVINCE_CODE or PROVINCE_NAME in str(name)
+    if not isinstance(rec, dict):
+        return False
+    vals = province_values(rec)
+    return PROVINCE_CODE in vals or any(PROVINCE_NAME in v for v in vals)
+
+
+def fetch_raw():
+    """ลองกรองที่ต้นทางด้วย province_code ก่อน ถ้าไม่ได้ผลค่อยดึงทั้งประเทศแล้วกรองเอง"""
+    for params in ({"province_code": PROVINCE_CODE}, None):
+        body = http_get_json(params)
+        rows = extract_rows(body)
+        if any(is_saraburi(r) for r in rows):
+            return rows, body
+    return rows, body
 
 
 def normalize(rec):
@@ -172,20 +216,25 @@ def save_state(state):
 
 
 def get_stations():
-    raw = fetch_raw()
-    return [normalize(r) for r in raw if is_saraburi(r)], raw
+    rows, body = fetch_raw()
+    return [normalize(r) for r in rows if is_saraburi(r)], rows, body
 
 
 def main():
-    stations, raw = get_stations()
+    stations, raw, body = get_stations()
 
     if "--debug" in sys.argv:
-        sample = next((r for r in raw if is_saraburi(r)), None)
-        print(f"สถานีทั้งประเทศ: {len(raw)} | สระบุรี: {len(stations)}")
-        print(json.dumps(sample, ensure_ascii=False, indent=2))
+        print("ชนิดข้อมูลชั้นนอก:", type(body).__name__,
+              "| keys:", list(body.keys())[:15] if isinstance(body, dict) else "-")
+        print(f"จำนวนแถวที่พบ: {len(raw)} | แถวของสระบุรี: {len(stations)}")
+        if raw:
+            print("keys ของแถวแรก:", list(raw[0].keys()))
+        sample = next((r for r in raw if is_saraburi(r)), raw[0] if raw else None)
+        print("\nตัวอย่างข้อมูล 1 แถว:")
+        print(json.dumps(sample, ensure_ascii=False, indent=2)[:3500])
         print("\nหลัง normalize:")
-        for s in stations:
-            print(s)
+        for s_ in stations:
+            print(s_)
         return
 
     if not stations:
