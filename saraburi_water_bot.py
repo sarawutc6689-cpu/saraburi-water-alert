@@ -120,18 +120,60 @@ def province_values(node, out=None):
     return out
 
 
+def geocode_values(node, out=None):
+    out = [] if out is None else out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if "geocode" in str(k).lower() and isinstance(v, (str, int)):
+                out.append(str(v))
+            else:
+                geocode_values(v, out)
+    return out
+
+
 def is_saraburi(rec):
     if not isinstance(rec, dict):
         return False
     vals = province_values(rec)
-    return PROVINCE_CODE in vals or any(PROVINCE_NAME in v for v in vals)
+    if PROVINCE_CODE in vals or any(PROVINCE_NAME in v for v in vals):
+        return True
+    # geocode ขึ้นต้นด้วยรหัสจังหวัด 2 หลัก (เช่น 190101)
+    return any(g.startswith(PROVINCE_CODE) and len(g) >= 2 for g in geocode_values(rec))
+
+
+STATION_ID_KEYS = ("station_id", "tele_station_id", "stationid", "station")
+
+
+def index_by_id(section):
+    rows = extract_rows(section)
+    return {str(r["id"]): r for r in rows if isinstance(r, dict) and r.get("id") is not None}
+
+
+def join_rows(body):
+    """ข้อมูลจริงเป็นแบบ relational: waterlevel_data อ้างอิง station ด้วย id จึงต้อง join ก่อน"""
+    if not (isinstance(body, dict) and "waterlevel_data" in body):
+        return extract_rows(body)
+    stations = index_by_id(body.get("station"))
+    out = []
+    for row in extract_rows(body.get("waterlevel_data")):
+        sid = next((str(row[k]) for k in STATION_ID_KEYS
+                    if row.get(k) is not None and not isinstance(row[k], dict)), None)
+        st = stations.get(sid, {}) if sid else {}
+        merged = {**st, **{k: v for k, v in row.items() if k != "id"}}
+        if sid:
+            merged["id"] = sid
+        if st:
+            merged["station"] = st
+        out.append(merged)
+    return out
 
 
 def fetch_raw():
     """ลองกรองที่ต้นทางด้วย province_code ก่อน ถ้าไม่ได้ผลค่อยดึงทั้งประเทศแล้วกรองเอง"""
+    rows, body = [], None
     for params in ({"province_code": PROVINCE_CODE}, None):
         body = http_get_json(params)
-        rows = extract_rows(body)
+        rows = join_rows(body)
         if any(is_saraburi(r) for r in rows):
             return rows, body
     return rows, body
@@ -224,16 +266,22 @@ def main():
     stations, raw, body = get_stations()
 
     if "--debug" in sys.argv:
-        print("ชนิดข้อมูลชั้นนอก:", type(body).__name__,
-              "| keys:", list(body.keys())[:15] if isinstance(body, dict) else "-")
-        print(f"จำนวนแถวที่พบ: {len(raw)} | แถวของสระบุรี: {len(stations)}")
-        if raw:
-            print("keys ของแถวแรก:", list(raw[0].keys()))
-        sample = next((r for r in raw if is_saraburi(r)), raw[0] if raw else None)
-        print("\nตัวอย่างข้อมูล 1 แถว:")
-        print(json.dumps(sample, ensure_ascii=False, indent=2)[:3500])
-        print("\nหลัง normalize:")
-        for s_ in stations:
+        print("โครงสร้างชั้นนอก:")
+        for k, v in (body.items() if isinstance(body, dict) else []):
+            size = len(v) if hasattr(v, "__len__") else "-"
+            print(f"  - {k}: {type(v).__name__} ({size})")
+        for name in ("waterlevel_data", "station"):
+            rows_ = extract_rows(body.get(name)) if isinstance(body, dict) else []
+            print(f"\n[{name}] จำนวนแถว {len(rows_)}")
+            if rows_:
+                print("keys:", list(rows_[0].keys()))
+                print(json.dumps(rows_[0], ensure_ascii=False)[:1500])
+        print(f"\nหลัง join: {len(raw)} แถว | ของสระบุรี: {len(stations)}")
+        sar = next((r for r in raw if is_saraburi(r)), None)
+        if sar:
+            print(json.dumps(sar, ensure_ascii=False, indent=1)[:2500])
+        print("\nหลัง normalize (10 สถานีแรก):")
+        for s_ in stations[:10]:
             print(s_)
         return
 
