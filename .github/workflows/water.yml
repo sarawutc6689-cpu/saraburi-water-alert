@@ -24,12 +24,12 @@ concurrency:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -38,7 +38,7 @@ jobs:
 
       # เก็บ state.json ข้ามรอบ: restore อันล่าสุด แล้ว save ใหม่ด้วย key ที่ไม่ซ้ำ
       - name: Restore state
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: state.json
           key: water-state-${{ github.run_id }}
