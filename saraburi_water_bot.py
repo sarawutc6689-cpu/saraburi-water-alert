@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-บอทแจ้งเตือนระดับน้ำจังหวัดสระบุรี ลพบุรี และพระนครศรีอยุธยา ผ่าน Telegram
+บอทแจ้งเตือนระดับน้ำจังหวัดสระบุรี (ครอบคลุมทุกสถานี ชลประทาน/สสน.) ผ่าน Telegram
 แหล่งข้อมูล: ThaiWater (สสน./HII) และเขื่อนป่าสักชลสิทธิ์ (กรมชลประทาน)
 
 วิธีใช้
@@ -20,14 +20,8 @@ import requests
 
 API_URL = "https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load"
 
-# ขยายขอบเขตจังหวัด: สระบุรี (19), ลพบุรี (16), พระนครศรีอยุธยา (13)
-TARGET_PROVINCES = {
-    "19": "สระบุรี",
-    "16": "ลพบุรี",
-    "13": "พระนครศรีอยุธยา",
-}
-PROVINCE_NAME = "สระบุรี ลพบุรี และอยุธยา"
-
+PROVINCE_CODE = "19"          # สระบุรี
+PROVINCE_NAME = "สระบุรี"
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 ALERT_FROM_LEVEL = 4          # แจ้งเตือนเมื่อ >= น้ำมาก
 
@@ -189,19 +183,14 @@ def geocode_values(node, out=None):
     return out
 
 
-def is_target_province(rec):
-    """ตรวจสอบว่าเป็นสถานีใน สระบุรี, ลพบุรี หรืออยุธยา หรือไม่"""
+def is_saraburi(rec):
     if not isinstance(rec, dict):
         return False
     vals = province_values(rec)
     geos = geocode_values(rec)
-    
-    for code, name in TARGET_PROVINCES.items():
-        if code in vals or any(name in v for v in vals):
-            return True
-        if any(g.startswith(code) and len(g) >= 2 for g in geos):
-            return True
-    return False
+    if PROVINCE_CODE in vals or any(PROVINCE_NAME in v for v in vals):
+        return True
+    return any(g.startswith(PROVINCE_CODE) and len(g) >= 2 for g in geos)
 
 
 STATION_ID_KEYS = ("station_id", "tele_station_id", "stationid", "station")
@@ -231,7 +220,6 @@ def join_rows(body):
 
 
 def fetch_raw():
-    # ดึงภาพรวมทั้งประเทศมาคัดกรอง เพื่อความครอบคลุมทั้ง 3 จังหวัด
     body = http_get_json(None)
     rows = join_rows(body)
     return rows, body
@@ -243,7 +231,7 @@ def normalize(rec):
     name = th(dig(rec, "station.tele_station_name", "tele_station_name", "station_name", default=sid))
     river = th(dig(rec, "river_name", "station.river_name", default=""))
     amphoe = th(dig(rec, "geocode.amphoe_name", "amphoe_name", default=""))
-    prov = th(dig(rec, "geocode.province_name", "province_name", default=""))
+    agency = th(dig(rec, "agency_name", "station.agency_name", default="")) # หน่วยงานต้นสังกัด (เช่น กรมชลประทาน)
     wl = to_float(dig(rec, "waterlevel_msl", "waterlevel_value", "water_level"))
     bank = to_float(dig(rec, "station.min_bank", "min_bank", "bank_level", "bank"))
     level = dig(rec, "situation_level", "station.situation_level")
@@ -255,7 +243,7 @@ def normalize(rec):
         "name": name or sid,
         "river": river,
         "amphoe": amphoe,
-        "province": prov,
+        "agency": agency,
         "wl": wl,
         "bank": bank,
         "level": level,
@@ -267,8 +255,8 @@ def normalize(rec):
 
 def fmt_station(s, with_time=True):
     emoji, label = LEVELS.get(s["level"], ("⚪", "ไม่ทราบสถานะ"))
-    prov_tag = f"[{s['province']}] " if s['province'] else ""
-    lines = [f"{emoji} <b>{prov_tag}{html.escape(s['name'])}</b>"]
+    agency_tag = f"[{s['agency']}] " if s['agency'] else ""
+    lines = [f"{emoji} <b>{html.escape(s['name'])}</b> {agency_tag}"]
     loc = " ".join(x for x in [s["river"], f"อ.{s['amphoe']}" if s["amphoe"] else ""] if x)
     if loc:
         lines.append(html.escape(loc))
@@ -326,7 +314,7 @@ def save_state(state):
 
 def get_stations():
     rows, body = fetch_raw()
-    out = [normalize(r) for r in rows if is_target_province(r)]
+    out = [normalize(r) for r in rows if is_saraburi(r)]
     for x in out:
         x["ts"] = parse_ts(x["time"])
     return out, rows, body
@@ -336,13 +324,13 @@ def main():
     stations, raw, body = get_stations()
 
     if "--debug" in sys.argv:
-        print(f"พบสถานีเป้าหมายทั้งหมด: {len(stations)} สถานี")
-        for s_ in stations[:15]:
-            print(s_)
+        print(f"พบสถานีในสระบุรีทั้งหมด: {len(stations)} สถานี")
+        for s_ in stations:
+            print(f"- {s_['name']} ({s_['agency']}) อ.{s_['amphoe']}")
         return
 
     if not stations:
-        print("ไม่พบสถานีเป้าหมาย ตรวจ field ด้วย --debug", file=sys.stderr)
+        print("ไม่พบสถานีของสระบุรี ตรวจ field ด้วย --debug", file=sys.stderr)
         return
 
     dam, now = fetch_dam(), time.time()
@@ -388,8 +376,8 @@ def main():
     write_site(stations, dam, now)
 
     if "--summary" in sys.argv:
-        stations.sort(key=lambda x: (x.get("province", ""), -(x["level"] or 0)))
-        send_telegram(f"📊 <b>สรุประดับน้ำ 3 จังหวัด (สระบุรี, ลพบุรี, อยุธยา)</b> ({len(stations)} สถานี)\n\n"
+        stations.sort(key=lambda x: -(x["level"] or 0))
+        send_telegram(f"📊 <b>สรุประดับน้ำ จ.{PROVINCE_NAME}</b> ({len(stations)} สถานี รวมทุกสังกัด)\n\n"
                       + "\n\n".join(fmt_station(x) for x in stations)
                       + ("\n\n" + fmt_dam(dam) if dam else ""))
         save_state(state)
@@ -399,7 +387,7 @@ def main():
     join = lambda xs, fn=fmt_station: "\n\n".join(fn(x) for x in xs)
     
     if alerts:
-        send_telegram(f"🚨 <b>แจ้งเตือนระดับน้ำลุ่มแม่น้ำใกล้เคียง</b>\n\n"
+        send_telegram(f"🚨 <b>แจ้งเตือนระดับน้ำ จ.{PROVINCE_NAME}</b>\n\n"
                       + join(sorted(alerts, key=lambda x: -x["level"])) + foot)
     if rises:
         send_telegram(f"📈 <b>น้ำเพิ่มเร็วผิดปกติ</b> (≥{RISE_M} ม. ใน {RISE_H} ชม.)\n\n"
