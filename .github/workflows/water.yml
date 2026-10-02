@@ -1,0 +1,58 @@
+name: Saraburi Water Alert
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # ตรวจทุก 15 นาที (เวลา UTC)
+    - cron: "0 0 * * *"      # 07:00 เวลาไทย = ส่งสรุปประจำวัน
+  workflow_dispatch:         # กดรันเองจากหน้าเว็บได้
+    inputs:
+      mode:
+        description: "โหมดการรัน"
+        type: choice
+        default: alert
+        options:
+          - alert
+          - summary
+          - debug
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saraburi-water
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # เก็บ state.json ข้ามรอบ: restore อันล่าสุด แล้ว save ใหม่ด้วย key ที่ไม่ซ้ำ
+      - name: Restore state
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: water-state-${{ github.run_id }}
+          restore-keys: |
+            water-state-
+
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MODE: ${{ github.event.inputs.mode }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          ARGS=""
+          if [ "$MODE" = "summary" ] || [ "$SCHEDULE" = "0 0 * * *" ]; then ARGS="--summary"; fi
+          if [ "$MODE" = "debug" ]; then ARGS="--debug"; fi
+          python saraburi_water_bot.py $ARGS
