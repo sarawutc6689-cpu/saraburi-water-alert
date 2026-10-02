@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>สถานการณ์น้ำจังหวัดสระบุรี (Real-time)</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-main: #f8fafc;
+            --text-sub: #94a3b8;
+            --border-color: #334155;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 16px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin: 0 0 8px 0;
+        }
+        .update-time {
+            color: var(--text-sub);
+            font-size: 0.85rem;
+        }
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            border: 1px solid var(--border-color);
+        }
+        .dam-card {
+            border-left: 5px solid #3b82f6;
+        }
+        .station-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+        .station-name {
+            font-weight: 600;
+            font-size: 1.05rem;
+        }
+        .station-agency {
+            font-size: 0.75rem;
+            background: #334155;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #cbd5e1;
+            margin-left: 6px;
+        }
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .bg-normal { background-color: #065f46; color: #a7f3d0; }
+        .bg-warning { background-color: #b45309; color: #fde68a; }
+        .bg-danger { background-color: #991b1b; color: #fecaca; }
+        
+        .station-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 8px;
+            font-size: 0.9rem;
+            color: var(--text-sub);
+            margin-top: 8px;
+        }
+        .station-details span strong {
+            color: var(--text-main);
+        }
+        .progress-bar-container {
+            background-color: var(--border-color);
+            border-radius: 4px;
+            height: 8px;
+            width: 100%;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        section h2 {
+            font-size: 1.15rem;
+            margin: 24px 0 12px 0;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 4px;
+        }
+        .loading {
+            text-align: center;
+            color: var(--text-sub);
+            padding: 40px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>🌊 สถานการณ์น้ำจังหวัดสระบุรี</h1>
+        <div class="update-time" id="update-time">กำลังโหลดข้อมูล...</div>
+    </header>
+
+    <div id="content">
+        <div class="loading">กำลังดึงข้อมูลล่าสุด...</div>
+    </div>
+</div>
+
+<script>
+async function fetchData() {
+    try {
+        const response = await fetch('data.json?t=' + new Date().getTime());
+        if (!response.ok) throw new Error('ไม่สามารถโหลดข้อมูลได้');
+        const data = await response.json();
+        
+        render(data);
+    } catch (error) {
+        document.getElementById('update-time').innerText = '⚠️ โหลดข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง';
+        console.error(error);
+    }
+}
+
+function render(data) {
+    // อัปเดตเวลา
+    const date = new Date(data.updated * 1000);
+    document.getElementById('update-time').innerText = 'ข้อมูลล่าสุด: ' + date.toLocaleString('th-TH');
+
+    let html = '';
+
+    // ส่วนของเขื่อน
+    if (data.dam) {
+        const d = data.dam;
+        const pct = d.pct !== null ? d.pct : 0;
+        const badgeClass = pct >= 90 ? 'bg-danger' : (pct >= 80 ? 'bg-warning' : 'bg-normal');
+        
+        html += `
+            <section>
+                <h2>🏞 เขื่อนสำคัญ</h2>
+                <div class="card dam-card">
+                    <div class="station-header">
+                        <div class="station-name">${d.name}</div>
+                        <span class="badge ${badgeClass}">${d.pct !== null ? d.pct.toFixed(1) + '%' : 'N/A'} ของความจุ</span>
+                    </div>
+                    <div class="station-details">
+                        <span>น้ำในเขื่อน: <strong>${d.volume !== null ? d.volume.toLocaleString() : '-'}</strong> ล้าน ลบ.ม.</span>
+                        <span>ไหลเข้า: <strong>${d.inflow !== null ? d.inflow.toLocaleString() : '-'}</strong></span>
+                        <span>ระบายออก: <strong>${d.outflow !== null ? d.outflow.toLocaleString() : '-'}</strong></span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: ${Math.min(pct, 100)}%; background-color: ${pct >= 90 ? '#ef4444' : '#3b82f6'};"></div>
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    // ส่วนของสถานีวัดน้ำ
+    html += `<section><h2>📍 สถานีวัดระดับน้ำในพื้นที่ (${data.stations.length} สถานี)</h2>`;
+    
+    if (data.stations.length === 0) {
+        html += `<div class="card"><div style="text-align: center; color: var(--text-sub);">ไม่พบข้อมูลสถานี</div></div>`;
+    } else {
+        // เรียงลำดับตามระดับความรุนแรง (level มากขึ้นก่อน)
+        data.stations.sort((a, b) => (b.level || 0) - (a.level || 0));
+
+        data.stations.forEach(s => {
+            let badgeText = 'ปกติ';
+            let badgeClass = 'bg-normal';
+            if (s.level >= 5) { badgeText = 'ล้นตลิ่ง'; badgeClass = 'bg-danger'; }
+            else if (s.level >= 4) { badgeText = 'น้ำมาก'; badgeClass = 'badge bg-warning'; }
+            else if (s.level <= 2) { badgeText = 'น้ำน้อย'; badgeClass = 'badge bg-warning'; }
+
+            let pctText = s.pct !== null ? Math.round(s.pct) + '%' : '-';
+            let barWidth = s.pct !== null ? Math.max(0, Math.min(s.pct, 100)) : 0;
+            let barColor = s.pct >= 100 ? '#ef4444' : (s.pct >= 70 ? '#f59e0b' : '#10b981');
+
+            html += `
+                <div class="card">
+                    <div class="station-header">
+                        <div>
+                            <span class="station-name">${s.name}</span>
+                            ${s.agency ? `<span class="station-agency">${s.agency}</span>` : ''}
+                        </div>
+                        <span class="badge ${badgeClass}">${badgeText}</span>
+                    </div>
+                    <div class="station-details">
+                        <span>แม่น้ำ/อำเภอ: <strong>${s.river || '-'} / ${s.amphoe || '-'}</strong></span>
+                        <span>ระดับน้ำ: <strong>${s.wl !== null ? s.wl.toFixed(2) : '-'}</strong> ม.รทก.</span>
+                        <span>ตลิ่ง: <strong>${s.bank !== null ? s.bank.toFixed(2) : '-'}</strong> ม.</span>
+                        <span>เทียบตลิ่ง: <strong>${pctText}</strong></span>
+                    </div>
+                    ${s.pct !== null ? `
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: ${barWidth}%; background-color: ${barColor};"></div>
+                    </div>` : ''}
+                    <div style="font-size: 0.75rem; color: var(--text-sub); margin-top: 8px; text-align: right;">
+                        อัปเดตล่าสุด: ${s.time || 'ไม่มีข้อมูล'}
+                    </div>
+                </div>
+            `;
+        });
+    }
+    html += `</section>`;
+
+    document.getElementById('content').innerHTML = html;
+}
+
+// โหลดครั้งแรก และรีเฟรชทุก 60 วินาที
+fetchData();
+setInterval(fetchData, 60000);
+</script>
+
+</body>
+</html>
