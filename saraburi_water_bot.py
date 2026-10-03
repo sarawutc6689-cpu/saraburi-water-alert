@@ -426,6 +426,8 @@ def normalize(rec):
         "level": level,
         "pct": to_float(dig(rec, "storage_percent")),
         "prev": to_float(dig(rec, "waterlevel_msl_previous")),
+        "lat": to_float(dig(rec, "station.tele_station_lat")),
+        "lon": to_float(dig(rec, "station.tele_station_long")),
         "time": dig(rec, "waterlevel_datetime", "datetime", "station.waterlevel_datetime", default=""),
     }
 
@@ -578,6 +580,13 @@ def main():
         us["hist"] = h
         win = [p for p in h if p[0] >= now - UP_RISE_H * 3600]
         u["rise"] = round(u["wl"] - win[0][1], 2) if u["wl"] is not None and len(win) >= 2 else None
+        u["hist"] = h
+
+    if r6 and r6["ts"] and r6["discharge"] is not None:
+        h6 = state["rama6"].get("hist", [])
+        if not h6 or h6[-1][0] != r6["ts"]:
+            h6 = h6 + [[r6["ts"], r6["discharge"]]]
+        r6["hist"] = h6
 
     write_site(stations, dam, now, dam_err, r6, r6_err,
                extra={"upstream": up, "upstream_error": up_err, "rain": rain, "rain_error": rain_err})
