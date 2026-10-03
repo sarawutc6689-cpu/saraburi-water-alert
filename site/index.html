@@ -81,6 +81,15 @@ function rama6Card(r,err){
   <div class="mut">ตลิ่ง ${f(r.bank)} ม.${gap==null?"":gap>=0?` · ต่ำกว่า ${f(gap)} ม.`:` · สูงกว่า ${f(-gap)} ม.`}${r.crit!=null?` · วิกฤต ${f(r.crit)} ม.`:""}</div>
   <div class="mut">ข้อมูลเมื่อ ${esc(r.time)}</div></div>`;
 }
+function upCard(us){
+  const rows=us.map(s=>{const c=C[s.level]||"#999";return`<div style="margin:6px 0"><b>${esc(s.name)}</b> <span class="tag" style="--c:${c}">${L[s.level]||"?"}</span><div class="mut">${esc(s.loc)} · ${f(s.wl)} ม.รทก. · ${s.rise==null?"-":(s.rise>0?"+":"")+f(s.rise)} ม./6 ชม. · ถึงเขื่อนป่าสักฯ ${esc(s.lag)} (ประมาณ)</div></div>`}).join("");
+  return`<div class="card" style="--c:${C[4]}"><h2>⛰ ต้นน้ำป่าสัก (เพชรบูรณ์)</h2>${rows}</div>`;
+}
+function rainCard(r){
+  const days=(r.days||[]).filter(x=>x.date>=r.today),mx=Math.max(0,...days.map(x=>x.max));
+  const c=mx>=90?C[5]:mx>=35?"#bc4c00":mx>=10?C[4]:C[3];
+  return`<div class="card" style="--c:${c}"><h2>🌧 พยากรณ์ฝน ลุ่มน้ำป่าสักตอนบน</h2>${days.map(x=>`<div class="mut">${esc(x.date)}: <b>${f(x.max,0)}</b> มม. (${esc(x.where)}) · เฉลี่ย ${f(x.avg,0)}</div>`).join("")}<div class="mut">จากแบบจำลอง Open-Meteo ไม่ใช่ประกาศกรมอุตุฯ</div></div>`;
+}
 async function load(){
   if(location.protocol==="file:"){
     upd.innerHTML="⚠️ เปิดจากไฟล์ในเครื่องไม่ได้ ต้องเปิดผ่านลิงก์ GitHub Pages (https://…github.io/…) เพราะหน้านี้ต้องโหลดไฟล์ data.json จากเซิร์ฟเวอร์";
@@ -97,7 +106,7 @@ async function load(){
     step="แสดงผล";
     const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
     const has6=d.rama6||d.rama6_error; // data.json รุ่นเก่ายังไม่มีคีย์นี้
-    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"");
+    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"")+(d.upstream&&d.upstream.length?upCard(d.upstream):"")+(d.rain?rainCard(d.rain):"");
     upd.textContent="อัปเดตล่าสุด "+new Date(d.updated*1000).toLocaleString("th-TH")+" · รีเฟรชอัตโนมัติ";
   }catch(e){upd.textContent="⚠️ โหลดข้อมูลไม่สำเร็จ (ขั้น: "+step+") — "+(e&&e.message||e);}
 }
