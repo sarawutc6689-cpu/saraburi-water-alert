@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: saraburi-water
@@ -26,6 +28,8 @@ jobs:
   run:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    environment:
+      name: github-pages
     steps:
       - uses: actions/checkout@v6
 
@@ -56,3 +60,12 @@ jobs:
           if [ "$MODE" = "summary" ] || [ "$SCHEDULE" = "0 0 * * *" ]; then ARGS="--summary"; fi
           if [ "$MODE" = "debug" ]; then ARGS="--debug"; fi
           python saraburi_water_bot.py $ARGS
+
+      - uses: actions/configure-pages@v5
+        if: github.event.inputs.mode != 'debug'
+      - uses: actions/upload-pages-artifact@v4
+        if: github.event.inputs.mode != 'debug'
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        if: github.event.inputs.mode != 'debug'
