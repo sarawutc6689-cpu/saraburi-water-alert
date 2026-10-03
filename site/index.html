@@ -56,13 +56,29 @@ function card(s){
 }
 function damCard(d,err){
   if(!d)return`<div class="card"><h2>🏞 เขื่อนป่าสักชลสิทธิ์</h2><div class="warn">⚠️ ดึงข้อมูลไม่สำเร็จ${err?": "+esc(err):""}</div></div>`;
-  const c=d.pct>=90?C[5]:d.pct>=70?C[4]:C[3];
+  const c=d.pct>=110?"#82071e":d.pct>=100?C[5]:d.pct>=90?"#bc4c00":d.pct>=70?C[4]:C[3];
+  const lab=d.pct>=110?"วิกฤตมาก":d.pct>=100?"วิกฤต":d.pct>=90?"เฝ้าระวัง":"";
   return`<div class="card" style="--c:${c}"><h2>🏞 ${esc(d.name)}</h2>
-  <div><span class="big">${f(d.pct,0)}%</span> ของความจุเก็บกัก</div>
+  <div><span class="big">${f(d.pct,0)}%</span> ของความจุเก็บกัก ${lab?`<span class="tag">${lab}</span>`:""}</div>
   <div class="bar"><i style="width:${Math.min(100,d.pct||0)}%"></i></div>
   <div class="mut">น้ำในเขื่อน ${f(d.volume,0)} / ${f(d.capacity,0)} ล้าน ลบ.ม.</div>
   <div class="mut">ไหลเข้า ${f(d.inflow)} · ระบาย ${f(d.outflow)}</div>
   <div class="mut">ข้อมูลวันที่ ${esc(d.date)}</div></div>`;
+}
+// เกณฑ์อัตราไหล (ลบ.ม./วิ) ต้องตรงกับ RAMA6_Q_LEVELS ในบอท
+function rama6Card(r,err){
+  if(!r)return`<div class="card"><h2>🚧 เขื่อนพระราม 6 (ท้ายเขื่อน)</h2><div class="warn">⚠️ ดึงข้อมูลไม่สำเร็จ${err?": "+esc(err):""}</div></div>`;
+  const q=r.discharge,crit=r.crit!=null&&r.wl!=null&&r.wl>=r.crit;
+  const lv=crit||q>=700?["#cf222e","ระบายน้ำสูงมาก"]:q>=600?["#bc4c00","ระบายน้ำมาก"]:q>=400?["#d4a72c","ระบายน้ำสูง"]:["#2da44e","ปกติ"];
+  const pct=r.qmax&&q!=null?Math.min(100,q/r.qmax*100):"";
+  const gap=r.bank&&r.wl!=null?r.bank-r.wl:null;
+  return`<div class="card" style="--c:${lv[0]}"><h2>🚧 เขื่อนพระราม 6 (ท้ายเขื่อน S.26)</h2>
+  <div class="loc">แม่น้ำป่าสัก อ.ท่าเรือ จ.พระนครศรีอยุธยา</div>
+  <div><span class="big">${f(q,0)}</span> ลบ.ม./วิ <span class="tag">${lv[1]}</span></div>
+  ${pct!==""?`<div class="bar"><i style="width:${pct}%"></i></div>`:""}
+  <div class="mut">${r.qmax?`ความจุลำน้ำ ~${f(r.qmax,0)} ลบ.ม./วิ · `:""}ระดับน้ำ ${f(r.wl)} ม.รทก.</div>
+  <div class="mut">ตลิ่ง ${f(r.bank)} ม.${gap==null?"":gap>=0?` · ต่ำกว่า ${f(gap)} ม.`:` · สูงกว่า ${f(-gap)} ม.`}${r.crit!=null?` · วิกฤต ${f(r.crit)} ม.`:""}</div>
+  <div class="mut">ข้อมูลเมื่อ ${esc(r.time)}</div></div>`;
 }
 async function load(){
   if(location.protocol==="file:"){
@@ -79,7 +95,8 @@ async function load(){
     const d=await r.json();
     step="แสดงผล";
     const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
-    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error);
+    const has6=d.rama6||d.rama6_error; // data.json รุ่นเก่ายังไม่มีคีย์นี้
+    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"");
     upd.textContent="อัปเดตล่าสุด "+new Date(d.updated*1000).toLocaleString("th-TH")+" · รีเฟรชอัตโนมัติ";
   }catch(e){upd.textContent="⚠️ โหลดข้อมูลไม่สำเร็จ (ขั้น: "+step+") — "+(e&&e.message||e);}
 }
