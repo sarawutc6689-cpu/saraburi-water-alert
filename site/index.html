@@ -54,11 +54,11 @@ function card(s){
   <div class="mut">ข้อมูลเมื่อ ${esc(s.time)}</div>
   ${s.stale?'<div class="warn">⏱ ข้อมูลไม่อัปเดตนาน</div>':""}</div>`;
 }
-function damCard(d){
-  if(!d)return"";
+function damCard(d,err){
+  if(!d)return`<div class="card"><h2>🏞 เขื่อนป่าสักชลสิทธิ์</h2><div class="warn">⚠️ ดึงข้อมูลไม่สำเร็จ${err?": "+esc(err):""}</div></div>`;
   const c=d.pct>=90?C[5]:d.pct>=70?C[4]:C[3];
   return`<div class="card" style="--c:${c}"><h2>🏞 ${esc(d.name)}</h2>
-  <div><span class="big">${f(d.pct,0)}%</span> ของความจุ</div>
+  <div><span class="big">${f(d.pct,0)}%</span> ของความจุเก็บกัก</div>
   <div class="bar"><i style="width:${Math.min(100,d.pct||0)}%"></i></div>
   <div class="mut">น้ำในเขื่อน ${f(d.volume,0)} / ${f(d.capacity,0)} ล้าน ลบ.ม.</div>
   <div class="mut">ไหลเข้า ${f(d.inflow)} · ระบาย ${f(d.outflow)}</div>
@@ -68,7 +68,7 @@ async function load(){
   try{
     const d=await (await fetch("data.json?t="+Date.now())).json();
     const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
-    g.innerHTML=st.map(card).join("")+damCard(d.dam);
+    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error);
     upd.textContent="อัปเดตล่าสุด "+new Date(d.updated*1000).toLocaleString("th-TH")+" · รีเฟรชอัตโนมัติ";
   }catch(e){upd.textContent="โหลดข้อมูลไม่สำเร็จ";}
 }
