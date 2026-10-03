@@ -62,8 +62,12 @@ def parse_ts(v):
         return None
 
 
+DAM_HEADERS = {"User-Agent": HEADERS["User-Agent"], "Accept": "application/json"}
+
+
 def fetch_dam():
-    """เขื่อนป่าสักชลสิทธิ์ จาก API กรมชลประทาน (ล้มเหลวแล้วไม่กระทบส่วนอื่น)"""
+    """เขื่อนป่าสักชลสิทธิ์ จาก API กรมชลประทาน คืนค่า (ข้อมูล, ข้อความ error)
+    โครงสร้างจริง: {date, data:[{region, dam:[{name, volume, percent_storage, ...}]}]}"""
     def walk(n):
         if isinstance(n, dict):
             if "ป่าสัก" in str(n.get("name", "")):
@@ -74,31 +78,45 @@ def fetch_dam():
                 f = walk(v)
                 if f:
                     return f
-    try:
-        r = requests.get(DAM_URL, headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        d = walk(r.json())
-        if not d:
-            return None
-        return {"name": str(d.get("name")), "pct": to_float(d.get("percent_storage")),
-                "volume": to_float(d.get("volume")), "capacity": to_float(d.get("capacity")),
-                "inflow": to_float(d.get("inflow")), "outflow": to_float(d.get("outflow")),
-                "date": str(d.get("date", ""))}
-    except Exception as e:
-        print("ดึงข้อมูลเขื่อนไม่สำเร็จ:", e, file=sys.stderr)
-        return None
+
+    err = "ไม่ทราบสาเหตุ"
+    for attempt in range(3):
+        try:
+            r = requests.get(DAM_URL, headers=DAM_HEADERS, timeout=30)
+            r.raise_for_status()
+            body = r.json()
+            d = walk(body)
+            if not d:
+                return None, "ไม่พบเขื่อนป่าสักชลสิทธิ์ในข้อมูลของกรมชลประทาน"
+            return {"name": str(d.get("name")), "pct": to_float(d.get("percent_storage")),
+                    "volume": to_float(d.get("volume")), "capacity": to_float(d.get("storage") or d.get("capacity")),
+                    "inflow": to_float(d.get("inflow")), "outflow": to_float(d.get("outflow")),
+                    "date": str(body.get("date", "") if isinstance(body, dict) else "")}, None
+        except Exception as e:
+            err = f"{type(e).__name__}: {str(e)[:150]}"
+            print(f"ดึงข้อมูลเขื่อนไม่สำเร็จ (ครั้งที่ {attempt + 1}): {err}", file=sys.stderr)
+            time.sleep(3 * (attempt + 1))
+    return None, err
 
 
-def fmt_dam(d):
-    pct = f" ({d['pct']:.0f}% ของความจุ)" if d["pct"] is not None else ""
-    return (f"🏞 <b>{html.escape(d['name'])}</b>\nน้ำในเขื่อน {d['volume']} ล้าน ลบ.ม.{pct}\n"
-            f"ไหลเข้า {d['inflow']} | ระบาย {d['outflow']} (หน่วยตามกรมชลประทาน)")
+def _num(v, nd=2):
+    return "ไม่มีข้อมูล" if v is None else f"{v:.{nd}f}"
 
 
-def write_site(stations, dam, now):
+def fmt_dam(d, err=None):
+    if not d:
+        return f"🏞 <b>เขื่อนป่าสักชลสิทธิ์</b>\n⚠️ ดึงข้อมูลไม่สำเร็จ: {html.escape(str(err or ''))}"
+    pct = f" ({d['pct']:.0f}% ของความจุเก็บกัก)" if d["pct"] is not None else ""
+    cap = f" / {d['capacity']:.0f}" if d["capacity"] is not None else ""
+    return (f"🏞 <b>{html.escape(d['name'])}</b>\nน้ำในเขื่อน {_num(d['volume'])}{cap} ล้าน ลบ.ม.{pct}\n"
+            f"ไหลเข้า {_num(d['inflow'])} | ระบาย {_num(d['outflow'])} (หน่วยตามกรมชลประทาน)\n"
+            f"ข้อมูลวันที่ {html.escape(d['date'])}")
+
+
+def write_site(stations, dam, now, dam_err=None):
     os.makedirs(SITE_DIR, exist_ok=True)
     with open(os.path.join(SITE_DIR, "data.json"), "w", encoding="utf-8") as f:
-        json.dump({"updated": now, "province": PROVINCE_NAME, "dam": dam, "stations": stations},
+        json.dump({"updated": now, "province": PROVINCE_NAME, "dam": dam, "dam_error": dam_err, "stations": stations},
                   f, ensure_ascii=False)
 
 
@@ -349,6 +367,7 @@ def main():
         sar = next((r for r in raw if is_saraburi(r)), None)
         if sar:
             print(json.dumps(sar, ensure_ascii=False, indent=1)[:2500])
+        print("\nเขื่อนป่าสักฯ:", fetch_dam())
         print("\nหลัง normalize (10 สถานีแรก):")
         for s_ in stations[:10]:
             print(s_)
@@ -358,7 +377,7 @@ def main():
         print("ไม่พบสถานีของสระบุรี ตรวจ field ด้วย --debug", file=sys.stderr)
         return
 
-    dam, now = fetch_dam(), time.time()
+    (dam, dam_err), now = fetch_dam(), time.time()
     state = load_state()
     if "levels" not in state:  # รองรับ state รูปแบบเก่า
         state = {"levels": state}
@@ -396,13 +415,13 @@ def main():
             fresh.append(s_)
             f["stale"] = False
 
-    write_site(stations, dam, now)
+    write_site(stations, dam, now, dam_err)
 
     if "--summary" in sys.argv:
         stations.sort(key=lambda x: -(x["level"] or 0))
         send_telegram(f"📊 <b>สรุประดับน้ำ จ.{PROVINCE_NAME}</b> ({len(stations)} สถานี)\n\n"
                       + "\n\n".join(fmt_station(x) for x in stations)
-                      + ("\n\n" + fmt_dam(dam) if dam else ""))
+                      + "\n\n" + fmt_dam(dam, dam_err))
         save_state(state)
         return
 
