@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ระดับน้ำ จ.สระบุรี</title>
+<style>
+:root{--bg:#f6f8fa;--fg:#1f2328;--card:#fff;--mut:#656d76;--bd:#d0d7de}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--card:#161b22;--mut:#8b949e;--bd:#30363d}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,"Noto Sans Thai",sans-serif}
+main{max-width:960px;margin:auto;padding:16px}
+h1{font-size:1.4rem;margin:0}
+.sub{color:var(--mut);font-size:.85rem;margin:2px 0 16px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.card{background:var(--card);border:1px solid var(--bd);border-left:6px solid var(--c,#999);border-radius:8px;padding:12px}
+.card h2{font-size:1rem;margin:0}
+.loc,.mut{color:var(--mut);font-size:.85rem}
+.big{font-size:1.6rem;font-weight:600}
+.tag{display:inline-block;padding:0 8px;border-radius:99px;font-size:.8rem;color:#fff;background:var(--c,#999)}
+.warn{color:#cf222e;font-size:.85rem}
+.bar{height:6px;background:var(--bd);border-radius:3px;margin:6px 0}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--c,#999)}
+svg{width:100%;height:36px}
+</style>
+</head>
+<body>
+<main>
+<h1>🌊 ระดับน้ำ จ.สระบุรี</h1>
+<div class="sub" id="upd">กำลังโหลด…</div>
+<div class="grid" id="g"></div>
+<p class="mut">ข้อมูลอัตโนมัติจาก ThaiWater (สสน.) และกรมชลประทาน ไม่ใช่ประกาศทางการ โปรดติดตาม ปภ./กรมชลประทาน</p>
+</main>
+<script>
+const C={1:"#8d6e63",2:"#d4a72c",3:"#2da44e",4:"#0969da",5:"#cf222e"};
+const L={1:"น้ำน้อยวิกฤติ",2:"น้ำน้อย",3:"ปกติ",4:"น้ำมาก",5:"ล้นตลิ่ง"};
+const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const f=(v,d=2)=>v==null?"-":Number(v).toFixed(d);
+function spark(h,c){
+  if(!h||h.length<2)return"";
+  const x0=h[0][0],xs=h[h.length-1][0]-x0||1,ys=h.map(p=>p[1]),lo=Math.min(...ys),hi=Math.max(...ys),r=hi-lo||1;
+  const pts=h.map(p=>`${((p[0]-x0)/xs*300).toFixed(1)},${(34-(p[1]-lo)/r*32).toFixed(1)}`).join(" ");
+  return`<svg viewBox="0 0 300 36" preserveAspectRatio="none"><polyline fill="none" stroke="${c}" stroke-width="2" points="${pts}"/></svg>`;
+}
+function card(s){
+  const c=C[s.level]||"#999",gap=s.bank&&s.wl!=null?s.bank-s.wl:null;
+  const pct=s.pct==null?"":Math.min(100,s.pct);
+  return`<div class="card" style="--c:${c}"><h2>${esc(s.name)}</h2>
+  <div class="loc">${esc([s.river,s.amphoe&&"อ."+s.amphoe].filter(Boolean).join(" "))}</div>
+  <div><span class="big">${f(s.wl)}</span> ม.รทก. <span class="tag">${L[s.level]||"ไม่ทราบ"}</span></div>
+  ${pct!==""?`<div class="bar"><i style="width:${pct}%"></i></div>`:""}
+  <div class="mut">ตลิ่ง ${f(s.bank)} ม.${gap==null?"":gap>=0?` · ต่ำกว่า ${f(gap)} ม.`:` · สูงกว่า ${f(-gap)} ม.`}${s.pct!=null?` · ${f(s.pct,0)}%`:""}</div>
+  <div class="mut">3 ชม.ที่ผ่านมา: ${s.rise==null?"-":(s.rise>0?"+":"")+f(s.rise)+" ม."}</div>
+  ${spark(s.hist,c)}
+  <div class="mut">ข้อมูลเมื่อ ${esc(s.time)}</div>
+  ${s.stale?'<div class="warn">⏱ ข้อมูลไม่อัปเดตนาน</div>':""}</div>`;
+}
+function damCard(d,err){
+  if(!d)return`<div class="card"><h2>🏞 เขื่อนป่าสักชลสิทธิ์</h2><div class="warn">⚠️ ดึงข้อมูลไม่สำเร็จ${err?": "+esc(err):""}</div></div>`;
+  const c=d.pct>=90?C[5]:d.pct>=70?C[4]:C[3];
+  return`<div class="card" style="--c:${c}"><h2>🏞 ${esc(d.name)}</h2>
+  <div><span class="big">${f(d.pct,0)}%</span> ของความจุเก็บกัก</div>
+  <div class="bar"><i style="width:${Math.min(100,d.pct||0)}%"></i></div>
+  <div class="mut">น้ำในเขื่อน ${f(d.volume,0)} / ${f(d.capacity,0)} ล้าน ลบ.ม.</div>
+  <div class="mut">ไหลเข้า ${f(d.inflow)} · ระบาย ${f(d.outflow)}</div>
+  <div class="mut">ข้อมูลวันที่ ${esc(d.date)}</div></div>`;
+}
+async function load(){
+  if(location.protocol==="file:"){
+    upd.innerHTML="⚠️ เปิดจากไฟล์ในเครื่องไม่ได้ ต้องเปิดผ่านลิงก์ GitHub Pages (https://…github.io/…) เพราะหน้านี้ต้องโหลดไฟล์ data.json จากเซิร์ฟเวอร์";
+    return;
+  }
+  let step="ดึงไฟล์ data.json";
+  try{
+    const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"});
+    if(!r.ok)throw new Error(r.status===404
+      ?"ไม่พบไฟล์ data.json (404) — บอทยังไม่เคยรันสำเร็จจนเขียนไฟล์นี้ หรือรอบล่าสุดที่เผยแพร่เป็นโหมด debug ให้รัน workflow โหมด summary หรือ alert อีกครั้ง"
+      :"เซิร์ฟเวอร์ตอบ HTTP "+r.status);
+    step="อ่านรูปแบบข้อมูล";
+    const d=await r.json();
+    step="แสดงผล";
+    const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
+    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error);
+    upd.textContent="อัปเดตล่าสุด "+new Date(d.updated*1000).toLocaleString("th-TH")+" · รีเฟรชอัตโนมัติ";
+  }catch(e){upd.textContent="⚠️ โหลดข้อมูลไม่สำเร็จ (ขั้น: "+step+") — "+(e&&e.message||e);}
+}
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
