@@ -65,12 +65,23 @@ function damCard(d,err){
   <div class="mut">ข้อมูลวันที่ ${esc(d.date)}</div></div>`;
 }
 async function load(){
+  if(location.protocol==="file:"){
+    upd.innerHTML="⚠️ เปิดจากไฟล์ในเครื่องไม่ได้ ต้องเปิดผ่านลิงก์ GitHub Pages (https://…github.io/…) เพราะหน้านี้ต้องโหลดไฟล์ data.json จากเซิร์ฟเวอร์";
+    return;
+  }
+  let step="ดึงไฟล์ data.json";
   try{
-    const d=await (await fetch("data.json?t="+Date.now())).json();
+    const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"});
+    if(!r.ok)throw new Error(r.status===404
+      ?"ไม่พบไฟล์ data.json (404) — บอทยังไม่เคยรันสำเร็จจนเขียนไฟล์นี้ หรือรอบล่าสุดที่เผยแพร่เป็นโหมด debug ให้รัน workflow โหมด summary หรือ alert อีกครั้ง"
+      :"เซิร์ฟเวอร์ตอบ HTTP "+r.status);
+    step="อ่านรูปแบบข้อมูล";
+    const d=await r.json();
+    step="แสดงผล";
     const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
     g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error);
     upd.textContent="อัปเดตล่าสุด "+new Date(d.updated*1000).toLocaleString("th-TH")+" · รีเฟรชอัตโนมัติ";
-  }catch(e){upd.textContent="โหลดข้อมูลไม่สำเร็จ";}
+  }catch(e){upd.textContent="⚠️ โหลดข้อมูลไม่สำเร็จ (ขั้น: "+step+") — "+(e&&e.message||e);}
 }
 load();setInterval(load,60000);
 </script>
