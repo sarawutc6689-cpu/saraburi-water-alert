@@ -1,10 +1,10 @@
 name: Saraburi Water Alert
 
 on:
-  schedule:
+   schedule:
     - cron: "*/15 * * * *"   # ตรวจทุก 15 นาที (เวลา UTC)
-    - cron: "0 0 * * *"      # 07:00 เวลาไทย = ส่งสรุปประจำวัน
-    - cron: "0 6 * * *"      # 13:00 เวลาไทย = ส่งสรุปประจำวัน
+    - cron: "7 0 * * *"      # ~07:07 เวลาไทย = ส่งสรุปประจำวัน
+    - cron: "7 6 * * *"      # ~13:07 เวลาไทย = ส่งสรุปประจำวัน
   workflow_dispatch:         # กดรันเองจากหน้าเว็บได้
     inputs:
       mode:
@@ -58,7 +58,7 @@ jobs:
           SCHEDULE: ${{ github.event.schedule }}
         run: |
           ARGS=""
-          if [ "$MODE" = "summary" ] || [ "$SCHEDULE" = "0 0 * * *" ]; then ARGS="--summary"; fi
+          if [ "$MODE" = "summary" ] || [ "$SCHEDULE" = "7 0 * * *" ] || [ "$SCHEDULE" = "7 6 * * *" ]; then ARGS="--summary"; fi
           if [ "$MODE" = "debug" ]; then ARGS="--debug"; fi
           python saraburi_water_bot.py $ARGS
 
