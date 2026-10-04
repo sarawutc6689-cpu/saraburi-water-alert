@@ -83,7 +83,8 @@ function rama6Card(r,err){
   ${pct!==""?`<div class="bar"><i style="width:${pct}%"></i></div>`:""}
   <div class="mut">${r.qmax?`ความจุลำน้ำ ~${f(r.qmax,0)} ลบ.ม./วิ · `:""}ระดับน้ำ ${f(r.wl)} ม.รทก.</div>
   <div class="mut">ตลิ่ง ${f(r.bank)} ม.${gap==null?"":gap>=0?` · ต่ำกว่า ${f(gap)} ม.`:` · สูงกว่า ${f(-gap)} ม.`}${r.crit!=null?` · วิกฤต ${f(r.crit)} ม.`:""}</div>
-  <div class="mut">ข้อมูลเมื่อ ${esc(r.time)}</div></div>`;
+  <div class="mut">ข้อมูลเมื่อ ${esc(r.time)}</div>
+  ${r.stale?'<div class="warn">⏱ ข้อมูลไม่อัปเดตนาน ตัวเลขอาจไม่ใช่สถานการณ์ปัจจุบัน</div>':""}</div>`;
 }
 function upCard(us){
   const rows=us.map(s=>{const c=C[s.level]||"#999";return`<div style="margin:6px 0"><b>${esc(s.name)}</b> <span class="tag" style="--c:${c}">${LBL[s.level]||"?"}</span><div class="mut">${esc(s.loc)} · ${f(s.wl)} ม.รทก. · ${s.rise==null?"-":(s.rise>0?"+":"")+f(s.rise)} ม./6 ชม. · ถึงเขื่อนป่าสักฯ ${esc(s.lag)} (ประมาณ)</div></div>`}).join("");
@@ -154,7 +155,12 @@ async function load(){
     g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"")+(d.upstream&&d.upstream.length?upCard(d.upstream):"")+(d.rain?rainCard(d.rain):"");
     try{drawMap(d)}catch(e){console.warn(e)}
     g.insertAdjacentHTML("beforeend",trends(d));
+    const ageMin=Math.round((Date.now()/1000-d.updated)/60);
     upd.textContent="อัปเดตล่าสุด "+new Date(d.updated*1000).toLocaleString("th-TH")+" · รีเฟรชอัตโนมัติ";
+    if(ageMin>45){
+      const t=ageMin>=120?Math.floor(ageMin/60)+" ชม.":ageMin+" นาที";
+      upd.innerHTML+=`<div class="warn" style="font-weight:600;margin-top:4px">⚠️ ข้อมูลบนหน้านี้เก่ากว่า ${t} — ระบบดึงข้อมูลอัตโนมัติอาจหยุดทำงาน อย่าใช้ตัวเลขนี้เป็นสถานการณ์ปัจจุบัน ตรวจที่ thaiwater.net หรือ ปภ. โดยตรง</div>`;
+    }
   }catch(e){upd.textContent="⚠️ โหลดข้อมูลไม่สำเร็จ (ขั้น: "+step+") — "+(e&&e.message||e);}
 }
 load();setInterval(load,60000);
