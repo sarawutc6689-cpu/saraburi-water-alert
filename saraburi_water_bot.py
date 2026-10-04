@@ -78,6 +78,10 @@ RAIN_POINTS = [("หล่มสัก", 16.78, 101.24), ("เมืองเพ
                ("วิเชียรบุรี", 15.65, 101.11), ("แก่งคอย", 14.58, 101.00)]   # จุดในลุ่มน้ำป่าสัก
 RAIN_LEVELS = [(35, "🟠", "ฝนหนัก"), (90, "🔴", "ฝนหนักมาก")]   # มม./วัน ตามเกณฑ์ของกรมอุตุฯ
 RAIN_REARM = 10
+LOCAL_POINTS = [("เมืองสระบุรี", 14.53, 100.91), ("มวกเหล็ก", 14.65, 101.20)]   # จุดในสระบุรี ใช้ดูฝนช่วงสั้น (ฝนตกหนักฉับพลัน)
+RAIN3_HOURS = 3
+RAIN3_LEVELS = [(30, "🟠", "ฝนตกหนักใน 3 ชม.ข้างหน้า"), (60, "🔴", "ฝนตกหนักมากใน 3 ชม.ข้างหน้า")]   # มม. สะสมใน 3 ชม. (เกณฑ์ประมาณการ ปรับได้)
+RAIN3_REARM = 10
 SUMMARY_HOURS = (7, 13)       # ส่งสรุปอัตโนมัติ 07:00 และ 13:00 เวลาไทย (รอบแรกที่รันหลังเวลานั้น)
 SUMMARY_GRACE_H = 3           # ถ้ารอบตั้งเวลาดีเลย์/ถูกข้าม ยังส่งให้ภายใน 3 ชม. หลังเวลานั้น
 DAM_URL = "https://app.rid.go.th/reservoir/api/dam/public"
@@ -221,23 +225,47 @@ def fetch_upstream():
 
 
 def fetch_rain():
-    """พยากรณ์ฝนรายวันจาก Open-Meteo (ฟรี ไม่ต้องใช้คีย์) เป็นค่าจากแบบจำลอง ไม่ใช่ข้อมูลเครื่องวัดฝน"""
+    """พยากรณ์ฝนจาก Open-Meteo (ฟรี ไม่ต้องใช้คีย์): รายวัน (ลุ่มน้ำตอนบน) + 3 ชม.ข้างหน้า (ทุกจุดรวมในสระบุรี)
+    เป็นค่าจากแบบจำลอง ไม่ใช่ข้อมูลเครื่องวัดฝน"""
     try:
+        pts = RAIN_POINTS + LOCAL_POINTS
         r = requests.get(RAIN_URL, timeout=30, params={
-            "latitude": ",".join(str(p[1]) for p in RAIN_POINTS),
-            "longitude": ",".join(str(p[2]) for p in RAIN_POINTS),
-            "daily": "precipitation_sum", "timezone": "Asia/Bangkok", "past_days": 1, "forecast_days": 3})
+            "latitude": ",".join(str(p[1]) for p in pts),
+            "longitude": ",".join(str(p[2]) for p in pts),
+            "daily": "precipitation_sum,precipitation_probability_max", "hourly": "precipitation",
+            "timezone": "Asia/Bangkok", "past_days": 1, "forecast_days": 3})
         r.raise_for_status()
         body = r.json()
         body = body if isinstance(body, list) else [body]
+        n_up = len(RAIN_POINTS)
         days = []
         for i, d in enumerate(body[0]["daily"]["time"]):
-            vals = [(RAIN_POINTS[k][0], to_float(b["daily"]["precipitation_sum"][i])) for k, b in enumerate(body)]
-            vals = [v for v in vals if v[1] is not None]
+            vals = []
+            for k, b in enumerate(body[:n_up]):
+                mm = to_float(b["daily"]["precipitation_sum"][i])
+                pr = to_float((b["daily"].get("precipitation_probability_max") or [None] * 99)[i])
+                if mm is not None:
+                    vals.append((RAIN_POINTS[k][0], mm, pr))
             if vals:
                 top = max(vals, key=lambda v: v[1])
-                days.append({"date": d, "max": top[1], "where": top[0], "avg": sum(v[1] for v in vals) / len(vals)})
-        return {"days": days, "today": datetime.now(TZ).strftime("%Y-%m-%d")}, None
+                days.append({"date": d, "max": top[1], "where": top[0], "prob": top[2],
+                             "avg": sum(v[1] for v in vals) / len(vals)})
+        # ฝนสะสมใน N ชม.ข้างหน้า (ค่า hourly ของ Open-Meteo = ปริมาณฝนของชั่วโมงก่อนหน้าเวลานั้น)
+        next3 = None
+        times = body[0]["hourly"]["time"]
+        cur = datetime.now(TZ).strftime("%Y-%m-%dT%H:00")
+        if cur in times:
+            i0 = times.index(cur)
+            best = None
+            for k, b in enumerate(body):
+                seg = [to_float(x) for x in b["hourly"]["precipitation"][i0 + 1:i0 + 1 + RAIN3_HOURS]]
+                if len(seg) == RAIN3_HOURS and all(x is not None for x in seg):
+                    tot = sum(seg)
+                    if best is None or tot > best[0]:
+                        best = (tot, pts[k][0])
+            if best:
+                next3 = {"mm": best[0], "where": best[1], "hours": RAIN3_HOURS}
+        return {"days": days, "next3": next3, "today": datetime.now(TZ).strftime("%Y-%m-%d")}, None
     except Exception as e:
         print(f"ดึงพยากรณ์ฝนไม่สำเร็จ: {e}", file=sys.stderr)
         return None, f"{type(e).__name__}: {str(e)[:150]}"
@@ -254,13 +282,21 @@ def fmt_upstream(up, err=None):
     return "\n".join(lines)
 
 
+def _rain_day_line(d):
+    pr = "" if d.get("prob") is None else f" โอกาสฝน {d['prob']:.0f}%"
+    return f"{d['date']}: สูงสุด {d['max']:.0f} มม. ({html.escape(d['where'])}) เฉลี่ย {d['avg']:.0f}{pr}"
+
+
 def fmt_rain(r, err=None):
     if not r:
         return f"🌧 <b>พยากรณ์ฝน</b>\n⚠️ ดึงข้อมูลไม่สำเร็จ: {html.escape(str(err or ''))}"
     lines = ["🌧 <b>พยากรณ์ฝนลุ่มน้ำป่าสักตอนบน</b> (แบบจำลอง Open-Meteo)"]
+    n3 = r.get("next3")
+    if n3:
+        lines.append(f"⏱ {n3['hours']} ชม.ข้างหน้า: สูงสุด {n3['mm']:.0f} มม. ({html.escape(n3['where'])})")
     for d in r["days"]:
         if d["date"] >= r["today"]:
-            lines.append(f"{d['date']}: สูงสุด {d['max']:.0f} มม. ({html.escape(d['where'])}) เฉลี่ย {d['avg']:.0f}")
+            lines.append(_rain_day_line(d))
     return "\n".join(lines)
 
 
@@ -563,7 +599,7 @@ def main():
     state = load_state()
     if "levels" not in state:  # รองรับ state รูปแบบเก่า
         state = {"levels": state}
-    for k in ("hist", "flags", "dam", "rama6", "up", "rain"):
+    for k in ("hist", "flags", "dam", "rama6", "up", "rain", "rain3"):
         state.setdefault(k, {})
     alerts, cleared, rises, stales, fresh = [], [], [], [], []
     for s_ in stations:
@@ -722,8 +758,18 @@ def main():
             top = max(c for _, c in hot)
             em, lab = RAIN_LEVELS[top - 1][1:]
             send_telegram(f"{em} <b>พยากรณ์: {lab} ในลุ่มน้ำป่าสักตอนบน</b>\n\n" + "\n".join(
-                f"{d['date']}: สูงสุด {d['max']:.0f} มม. ({html.escape(d['where'])}) เฉลี่ย {d['avg']:.0f}" for d, _ in hot)
+                _rain_day_line(d) for d, _ in hot)
                 + "\n\nเป็นค่าจากแบบจำลองพยากรณ์ ผลต่อระดับน้ำขึ้นกับความชื้นดินและการบริหารเขื่อน" + foot)
+    n3 = rain.get("next3") if rain else None
+    if n3:
+        prev3 = state["rain3"].get("lvl", 0)
+        curr3 = next_level(n3["mm"], RAIN3_LEVELS, prev3, RAIN3_REARM)
+        if curr3 > prev3:
+            em, lab = RAIN3_LEVELS[curr3 - 1][1:]
+            send_telegram(f"{em} <b>พยากรณ์: {lab}</b>\n\nสะสมสูงสุด {n3['mm']:.0f} มม. ใน {n3['hours']} ชม. "
+                          f"({html.escape(n3['where'])})\nเสี่ยงน้ำท่วมฉับพลัน/น้ำหลากในพื้นที่ลาดชันและริมลำน้ำ"
+                          "\n\nเป็นค่าจากแบบจำลองพยากรณ์ คลาดเคลื่อนได้มาก ควรดูประกาศกรมอุตุนิยมวิทยาประกอบ" + foot)
+        state["rain3"]["lvl"] = curr3
     slot = due_summary_slot(state, now)
     if slot:
         send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, "สรุปประจำเวลา"))
