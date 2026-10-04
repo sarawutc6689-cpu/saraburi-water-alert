@@ -78,6 +78,8 @@ RAIN_POINTS = [("หล่มสัก", 16.78, 101.24), ("เมืองเพ
                ("วิเชียรบุรี", 15.65, 101.11), ("แก่งคอย", 14.58, 101.00)]   # จุดในลุ่มน้ำป่าสัก
 RAIN_LEVELS = [(35, "🟠", "ฝนหนัก"), (90, "🔴", "ฝนหนักมาก")]   # มม./วัน ตามเกณฑ์ของกรมอุตุฯ
 RAIN_REARM = 10
+SUMMARY_HOURS = (7, 13)       # ส่งสรุปอัตโนมัติ 07:00 และ 13:00 เวลาไทย (รอบแรกที่รันหลังเวลานั้น)
+SUMMARY_GRACE_H = 3           # ถ้ารอบตั้งเวลาดีเลย์/ถูกข้าม ยังส่งให้ภายใน 3 ชม. หลังเวลานั้น
 DAM_URL = "https://app.rid.go.th/reservoir/api/dam/public"
 SITE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site")
 
@@ -190,6 +192,8 @@ def fmt_rama6(r, err=None):
             extra.append(f"วิกฤต {r['crit']:.2f}")
         lines.append(f"ระดับน้ำ {r['wl']:.2f} ม.รทก." + (f" ({' | '.join(extra)})" if extra else ""))
     lines.append(f"ข้อมูลเมื่อ {html.escape(str(r['time']))}")
+    if r.get("stale"):
+        lines.append(f"⏱ ข้อมูลไม่อัปเดตเกิน {STALE_H} ชม. ตัวเลขอาจไม่ใช่สถานการณ์ปัจจุบัน")
     return "\n".join(lines)
 
 
@@ -499,6 +503,26 @@ def get_stations():
     return out, rows, body
 
 
+def summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, title="สรุประดับน้ำ"):
+    st = sorted(stations, key=lambda x: -(x["level"] or 0))
+    return (f"📊 <b>{title} จ.{PROVINCE_NAME}</b> ({len(st)} สถานี)\n\n"
+            + "\n\n".join(fmt_station(x) for x in st)
+            + "\n\n" + fmt_dam(dam, dam_err) + "\n\n" + fmt_rama6(r6, r6_err)
+            + "\n\n" + fmt_upstream(up, up_err) + "\n\n" + fmt_rain(rain, rain_err))
+
+
+def due_summary_slot(state, now_ts):
+    """คืน key ของรอบสรุปที่ถึงเวลาแต่ยังไม่ส่ง (เช่น '2026-10-04-07') ไม่งั้นคืน None
+    ใช้เวลาไทยของบอตเอง จึงไม่ขึ้นกับว่า GitHub ดีเลย์หรือข้ามรอบตั้งเวลา"""
+    t = datetime.fromtimestamp(now_ts, TZ)
+    sent = state.setdefault("summary_sent", {})
+    for h in sorted(SUMMARY_HOURS, reverse=True):
+        key = f"{t:%Y-%m-%d}-{h:02d}"
+        if 0 <= t.hour - h < SUMMARY_GRACE_H and key not in sent:
+            return key
+    return None
+
+
 def main():
     stations, raw, body = get_stations()
 
@@ -532,6 +556,8 @@ def main():
 
     (dam, dam_err), now = fetch_dam(), time.time()
     r6, r6_err = fetch_rama6()
+    if r6:
+        r6["stale"] = bool(r6["ts"]) and now - r6["ts"] > STALE_H * 3600
     up, up_err = fetch_upstream()
     rain, rain_err = fetch_rain()
     state = load_state()
@@ -592,11 +618,7 @@ def main():
                extra={"upstream": up, "upstream_error": up_err, "rain": rain, "rain_error": rain_err})
 
     if "--summary" in sys.argv:
-        stations.sort(key=lambda x: -(x["level"] or 0))
-        send_telegram(f"📊 <b>สรุประดับน้ำ จ.{PROVINCE_NAME}</b> ({len(stations)} สถานี)\n\n"
-                      + "\n\n".join(fmt_station(x) for x in stations)
-                      + "\n\n" + fmt_dam(dam, dam_err) + "\n\n" + fmt_rama6(r6, r6_err)
-                      + "\n\n" + fmt_upstream(up, up_err) + "\n\n" + fmt_rain(rain, rain_err))
+        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err))
         save_state(state)
         return
 
@@ -702,6 +724,12 @@ def main():
             send_telegram(f"{em} <b>พยากรณ์: {lab} ในลุ่มน้ำป่าสักตอนบน</b>\n\n" + "\n".join(
                 f"{d['date']}: สูงสุด {d['max']:.0f} มม. ({html.escape(d['where'])}) เฉลี่ย {d['avg']:.0f}" for d, _ in hot)
                 + "\n\nเป็นค่าจากแบบจำลองพยากรณ์ ผลต่อระดับน้ำขึ้นกับความชื้นดินและการบริหารเขื่อน" + foot)
+    slot = due_summary_slot(state, now)
+    if slot:
+        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, "สรุปประจำเวลา"))
+        state["summary_sent"][slot] = int(now)
+        for k in sorted(state["summary_sent"])[:-6]:   # เก็บแค่ 6 รายการล่าสุด
+            state["summary_sent"].pop(k, None)
     save_state(state)
     print(f"ตรวจ {len(stations)} สถานี | น้ำมาก {len(alerts)} | ขึ้นเร็ว {len(rises)} | ข้อมูลค้าง {len(stales)} | คลี่คลาย {len(cleared)}")
 
