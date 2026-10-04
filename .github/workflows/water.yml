@@ -1,10 +1,8 @@
 name: Saraburi Water Alert
 
 on:
-   schedule:
-    - cron: "*/15 * * * *"   # ตรวจทุก 15 นาที (เวลา UTC)
-    - cron: "7 0 * * *"      # ~07:07 เวลาไทย = ส่งสรุปประจำวัน
-    - cron: "7 6 * * *"      # ~13:07 เวลาไทย = ส่งสรุปประจำวัน
+  schedule:
+    - cron: "*/15 * * * *"   # ตรวจทุก 15 นาที (สรุป 07:00/13:00 เวลาไทย บอตส่งเองตามเวลา)
   workflow_dispatch:         # กดรันเองจากหน้าเว็บได้
     inputs:
       mode:
@@ -55,10 +53,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MODE: ${{ github.event.inputs.mode }}
-          SCHEDULE: ${{ github.event.schedule }}
         run: |
           ARGS=""
-          if [ "$MODE" = "summary" ] || [ "$SCHEDULE" = "7 0 * * *" ] || [ "$SCHEDULE" = "7 6 * * *" ]; then ARGS="--summary"; fi
+          if [ "$MODE" = "summary" ]; then ARGS="--summary"; fi
           if [ "$MODE" = "debug" ]; then ARGS="--debug"; fi
           python saraburi_water_bot.py $ARGS
 
