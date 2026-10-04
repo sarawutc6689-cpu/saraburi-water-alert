@@ -91,9 +91,11 @@ function upCard(us){
   return`<div class="card" style="--c:${C[4]}"><h2>⛰ ต้นน้ำป่าสัก (เพชรบูรณ์)</h2>${rows}</div>`;
 }
 function rainCard(r){
-  const days=(r.days||[]).filter(x=>x.date>=r.today),mx=Math.max(0,...days.map(x=>x.max));
-  const c=mx>=90?C[5]:mx>=35?"#bc4c00":mx>=10?C[4]:C[3];
-  return`<div class="card" style="--c:${c}"><h2>🌧 พยากรณ์ฝน ลุ่มน้ำป่าสักตอนบน</h2>${days.map(x=>`<div class="mut">${esc(x.date)}: <b>${f(x.max,0)}</b> มม. (${esc(x.where)}) · เฉลี่ย ${f(x.avg,0)}</div>`).join("")}<div class="mut">จากแบบจำลอง Open-Meteo ไม่ใช่ประกาศกรมอุตุฯ</div></div>`;
+  const days=(r.days||[]).filter(x=>x.date>=r.today),n3=r.next3;
+  const mx=Math.max(0,...days.map(x=>x.max)),c3=n3?(n3.mm>=60?C[5]:n3.mm>=30?"#bc4c00":0):0;
+  const c=c3===C[5]||mx>=90?C[5]:c3||mx>=35?"#bc4c00":mx>=10?C[4]:C[3];
+  const h3=n3?`<div class="mut">⏱ ${n3.hours} ชม.ข้างหน้า: <b>${f(n3.mm,0)}</b> มม. (${esc(n3.where)})</div>`:"";
+  return`<div class="card" style="--c:${c}"><h2>🌧 พยากรณ์ฝน ลุ่มน้ำป่าสักตอนบน</h2>${h3}${days.map(x=>`<div class="mut">${esc(x.date)}: <b>${f(x.max,0)}</b> มม. (${esc(x.where)}) · เฉลี่ย ${f(x.avg,0)}${x.prob==null?"":" · โอกาสฝน "+f(x.prob,0)+"%"}</div>`).join("")}<div class="mut">จากแบบจำลอง Open-Meteo ไม่ใช่ประกาศกรมอุตุฯ</div></div>`;
 }
 let MAP,LAYER,FIT=false;
 const DAM_POS=null; // ใส่ [ละติจูด, ลองจิจูด] ของเขื่อนป่าสักชลสิทธิ์ เมื่อทราบพิกัดที่ถูกต้อง
