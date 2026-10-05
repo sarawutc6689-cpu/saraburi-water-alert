@@ -90,12 +90,13 @@ function upCard(us){
   const rows=us.map(s=>{const c=C[s.level]||"#999";return`<div style="margin:6px 0"><b>${esc(s.name)}</b> <span class="tag" style="--c:${c}">${LBL[s.level]||"?"}</span><div class="mut">${esc(s.loc)} · ${f(s.wl)} ม.รทก. · ${s.rise==null?"-":(s.rise>0?"+":"")+f(s.rise)} ม./6 ชม. · ถึงเขื่อนป่าสักฯ ${esc(s.lag)} (ประมาณ)</div></div>`}).join("");
   return`<div class="card" style="--c:${C[4]}"><h2>⛰ ต้นน้ำป่าสัก (เพชรบูรณ์)</h2>${rows}</div>`;
 }
-function rainCard(r){
-  const days=(r.days||[]).filter(x=>x.date>=r.today),n3=r.next3;
-  const mx=Math.max(0,...days.map(x=>x.max)),c3=n3?(n3.mm>=60?C[5]:n3.mm>=30?"#bc4c00":0):0;
+function rainCard(r,t){
+  r=r||{};const days=(r.days||[]).filter(x=>x.date>=r.today),n3=r.next3,tn=t&&t.next3;
+  const mm3=Math.max(n3?n3.mm:0,tn?tn.mm:0);
+  const mx=Math.max(0,...days.map(x=>x.max)),c3=mm3>=60?C[5]:mm3>=30?"#bc4c00":0;
   const c=c3===C[5]||mx>=90?C[5]:c3||mx>=35?"#bc4c00":mx>=10?C[4]:C[3];
-  const h3=n3?`<div class="mut">⏱ ${n3.hours} ชม.ข้างหน้า: <b>${f(n3.mm,0)}</b> มม. (${esc(n3.where)})</div>`:"";
-  return`<div class="card" style="--c:${c}"><h2>🌧 พยากรณ์ฝน ลุ่มน้ำป่าสักตอนบน</h2>${h3}${days.map(x=>`<div class="mut">${esc(x.date)}: <b>${f(x.max,0)}</b> มม. (${esc(x.where)}) · เฉลี่ย ${f(x.avg,0)}${x.prob==null?"":" · โอกาสฝน "+f(x.prob,0)+"%"}</div>`).join("")}<div class="mut">จากแบบจำลอง Open-Meteo ไม่ใช่ประกาศกรมอุตุฯ</div></div>`;
+  const h3=(tn?`<div class="mut">⏱ ${tn.hours} ชม.ข้างหน้า (กรมอุตุฯ TMD): <b>${f(tn.mm,0)}</b> มม. (${esc(tn.where)})</div>`:"")+(n3?`<div class="mut">⏱ ${n3.hours} ชม.ข้างหน้า (Open-Meteo): <b>${f(n3.mm,0)}</b> มม. (${esc(n3.where)})</div>`:"");
+  return`<div class="card" style="--c:${c}"><h2>🌧 พยากรณ์ฝน ลุ่มน้ำป่าสักตอนบน</h2>${h3}${days.map(x=>`<div class="mut">${esc(x.date)}: <b>${f(x.max,0)}</b> มม. (${esc(x.where)}) · เฉลี่ย ${f(x.avg,0)}${x.prob==null?"":" · โอกาสฝน "+f(x.prob,0)+"%"}</div>`).join("")}<div class="mut">รายวัน/3 ชม.จากแบบจำลอง Open-Meteo ไม่ใช่ประกาศกรมอุตุฯ${tn?" · ส่วน TMD คือพยากรณ์รายชั่วโมงของกรมอุตุฯ":""}</div></div>`;
 }
 let MAP,LAYER,FIT=false;
 const DAM_POS=null; // ใส่ [ละติจูด, ลองจิจูด] ของเขื่อนป่าสักชลสิทธิ์ เมื่อทราบพิกัดที่ถูกต้อง
@@ -154,7 +155,7 @@ async function load(){
     step="แสดงผล";
     const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
     const has6=d.rama6||d.rama6_error; // data.json รุ่นเก่ายังไม่มีคีย์นี้
-    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"")+(d.upstream&&d.upstream.length?upCard(d.upstream):"")+(d.rain?rainCard(d.rain):"");
+    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"")+(d.upstream&&d.upstream.length?upCard(d.upstream):"")+((d.rain||d.tmd)?rainCard(d.rain,d.tmd):"");
     try{drawMap(d)}catch(e){console.warn(e)}
     g.insertAdjacentHTML("beforeend",trends(d));
     const ageMin=Math.round((Date.now()/1000-d.updated)/60);
