@@ -82,6 +82,10 @@ LOCAL_POINTS = [("เมืองสระบุรี", 14.53, 100.91), ("ม�
 RAIN3_HOURS = 3
 RAIN3_LEVELS = [(30, "🟠", "ฝนตกหนักใน 3 ชม.ข้างหน้า"), (60, "🔴", "ฝนตกหนักมากใน 3 ชม.ข้างหน้า")]   # มม. สะสมใน 3 ชม. (เกณฑ์ประมาณการ ปรับได้)
 RAIN3_REARM = 10
+TMD_URL = "https://data.tmd.go.th/nwpapi/v1/forecast/location/hourly/at"   # API พยากรณ์รายชั่วโมงตามพิกัดของกรมอุตุนิยมวิทยา (ต้องมี token)
+TMD_FIELD = "rain"            # ชื่อตัวแปรปริมาณฝน (มม./ชม.) ตามเอกสาร TMD "ตัวแปรพยากรณ์อากาศรายชั่วโมง" ตรวจด้วย --debug
+TMD_POINTS = [("เมืองสระบุรี", 14.53, 100.91), ("มวกเหล็ก", 14.65, 101.20),
+              ("แก่งคอย", 14.58, 101.00), ("หนองไผ่", 16.11, 101.10)]   # จำกัดจำนวนจุด เพื่อไม่ชน rate limit
 SUMMARY_HOURS = (7, 13)       # ส่งสรุปอัตโนมัติ 07:00 และ 13:00 เวลาไทย (รอบแรกที่รันหลังเวลานั้น)
 SUMMARY_GRACE_H = 3           # ถ้ารอบตั้งเวลาดีเลย์/ถูกข้าม ยังส่งให้ภายใน 3 ชม. หลังเวลานั้น
 DAM_URL = "https://app.rid.go.th/reservoir/api/dam/public"
@@ -269,6 +273,52 @@ def fetch_rain():
     except Exception as e:
         print(f"ดึงพยากรณ์ฝนไม่สำเร็จ: {e}", file=sys.stderr)
         return None, f"{type(e).__name__}: {str(e)[:150]}"
+
+
+def fetch_tmd(debug=False):
+    """พยากรณ์ฝน 3 ชม.ข้างหน้าจาก TMD (ต้องตั้ง TMD_TOKEN) ไม่มี token = ข้ามเงียบ ๆ คืน (None, None)"""
+    token = os.environ.get("TMD_TOKEN", "").strip()
+    if not token:
+        return None, None
+    try:
+        start = datetime.now(TZ).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        pts = []
+        for name, lat, lon in TMD_POINTS:
+            r = requests.get(TMD_URL, timeout=30, headers={"accept": "application/json", "authorization": f"Bearer {token}"},
+                             params={"lat": lat, "lon": lon, "date": start.strftime("%Y-%m-%d"), "hour": start.hour,
+                                     "duration": RAIN3_HOURS, "fields": TMD_FIELD})
+            if r.status_code == 429:
+                raise RuntimeError("เรียก TMD ถี่เกิน rate limit (429)")
+            if r.status_code in (401, 403):
+                raise RuntimeError(f"token TMD ใช้ไม่ได้หรือหมดอายุ ({r.status_code})")
+            if r.status_code == 422:
+                raise RuntimeError(f"TMD ปฏิเสธ request (422) ตรวจชื่อ field '{TMD_FIELD}': {r.text[:120]}")
+            r.raise_for_status()
+            body = r.json()
+            if debug:
+                print(f"TMD {name}:", json.dumps(body, ensure_ascii=False)[:600])
+            fc = body["WeatherForecasts"][0]["forecasts"]
+            vals = [to_float((f.get("data") or {}).get(TMD_FIELD)) for f in fc]
+            if len(vals) < RAIN3_HOURS or any(v is None for v in vals):
+                raise RuntimeError(f"ข้อมูล TMD ไม่ครบหรือไม่มี field '{TMD_FIELD}'")
+            pts.append((name, sum(vals[:RAIN3_HOURS])))
+        top = max(pts, key=lambda v: v[1])
+        return {"next3": {"mm": top[1], "where": top[0], "hours": RAIN3_HOURS},
+                "points": [{"name": n, "mm": m} for n, m in pts]}, None
+    except Exception as e:
+        print(f"ดึงพยากรณ์ TMD ไม่สำเร็จ: {e}", file=sys.stderr)
+        return None, f"{type(e).__name__}: {str(e)[:150]}"
+
+
+def fmt_tmd(t, err=None):
+    if err:
+        return f"🌦 <b>พยากรณ์ฝน กรมอุตุฯ (TMD)</b>\n⚠️ ดึงข้อมูลไม่สำเร็จ: {html.escape(str(err))}"
+    if not t:
+        return ""
+    n = t["next3"]
+    pts = " · ".join(f"{html.escape(p['name'])} {p['mm']:.0f}" for p in t["points"])
+    return (f"🌦 <b>พยากรณ์ฝน กรมอุตุฯ (TMD)</b>\n⏱ {n['hours']} ชม.ข้างหน้า: สูงสุด {n['mm']:.0f} มม. "
+            f"({html.escape(n['where'])})\n{pts} (มม.)")
 
 
 def fmt_upstream(up, err=None):
@@ -539,12 +589,13 @@ def get_stations():
     return out, rows, body
 
 
-def summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, title="สรุประดับน้ำ"):
+def summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, title="สรุประดับน้ำ", tmd=None, tmd_err=None):
     st = sorted(stations, key=lambda x: -(x["level"] or 0))
     return (f"📊 <b>{title} จ.{PROVINCE_NAME}</b> ({len(st)} สถานี)\n\n"
             + "\n\n".join(fmt_station(x) for x in st)
             + "\n\n" + fmt_dam(dam, dam_err) + "\n\n" + fmt_rama6(r6, r6_err)
-            + "\n\n" + fmt_upstream(up, up_err) + "\n\n" + fmt_rain(rain, rain_err))
+            + "\n\n" + fmt_upstream(up, up_err) + "\n\n" + fmt_rain(rain, rain_err)
+            + (("\n\n" + fmt_tmd(tmd, tmd_err)) if (tmd or tmd_err) else ""))
 
 
 def due_summary_slot(state, now_ts):
@@ -581,6 +632,7 @@ def main():
         print("\nพระราม 6:", fetch_rama6())
         print("\nต้นน้ำ:", fetch_upstream())
         print("\nฝน:", fetch_rain())
+        print("\nTMD:", fetch_tmd(debug=True) if os.environ.get("TMD_TOKEN") else "ไม่ได้ตั้ง TMD_TOKEN")
         print("\nหลัง normalize (10 สถานีแรก):")
         for s_ in stations[:10]:
             print(s_)
@@ -596,6 +648,7 @@ def main():
         r6["stale"] = bool(r6["ts"]) and now - r6["ts"] > STALE_H * 3600
     up, up_err = fetch_upstream()
     rain, rain_err = fetch_rain()
+    tmd, tmd_err = fetch_tmd()
     state = load_state()
     if "levels" not in state:  # รองรับ state รูปแบบเก่า
         state = {"levels": state}
@@ -651,10 +704,10 @@ def main():
         r6["hist"] = h6
 
     write_site(stations, dam, now, dam_err, r6, r6_err,
-               extra={"upstream": up, "upstream_error": up_err, "rain": rain, "rain_error": rain_err})
+               extra={"upstream": up, "upstream_error": up_err, "rain": rain, "rain_error": rain_err, "tmd": tmd, "tmd_error": tmd_err})
 
     if "--summary" in sys.argv:
-        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err))
+        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, tmd=tmd, tmd_err=tmd_err))
         save_state(state)
         return
 
@@ -760,19 +813,25 @@ def main():
             send_telegram(f"{em} <b>พยากรณ์: {lab} ในลุ่มน้ำป่าสักตอนบน</b>\n\n" + "\n".join(
                 _rain_day_line(d) for d, _ in hot)
                 + "\n\nเป็นค่าจากแบบจำลองพยากรณ์ ผลต่อระดับน้ำขึ้นกับความชื้นดินและการบริหารเขื่อน" + foot)
-    n3 = rain.get("next3") if rain else None
+    cands = []
+    if tmd:
+        cands.append(("กรมอุตุฯ (TMD)", tmd["next3"]))
+    if rain and rain.get("next3"):
+        cands.append(("Open-Meteo", rain["next3"]))
+    src, n3 = max(cands, key=lambda c: c[1]["mm"]) if cands else (None, None)
     if n3:
         prev3 = state["rain3"].get("lvl", 0)
         curr3 = next_level(n3["mm"], RAIN3_LEVELS, prev3, RAIN3_REARM)
         if curr3 > prev3:
             em, lab = RAIN3_LEVELS[curr3 - 1][1:]
+            others = "".join(f"\n{html.escape(nm)}: {c['mm']:.0f} มม." for nm, c in cands if nm != src)
             send_telegram(f"{em} <b>พยากรณ์: {lab}</b>\n\nสะสมสูงสุด {n3['mm']:.0f} มม. ใน {n3['hours']} ชม. "
-                          f"({html.escape(n3['where'])})\nเสี่ยงน้ำท่วมฉับพลัน/น้ำหลากในพื้นที่ลาดชันและริมลำน้ำ"
-                          "\n\nเป็นค่าจากแบบจำลองพยากรณ์ คลาดเคลื่อนได้มาก ควรดูประกาศกรมอุตุนิยมวิทยาประกอบ" + foot)
+                          f"({html.escape(n3['where'])}) จาก {src}{others}\nเสี่ยงน้ำท่วมฉับพลัน/น้ำหลากในพื้นที่ลาดชันและริมลำน้ำ"
+                          "\n\nเป็นค่าพยากรณ์ คลาดเคลื่อนได้ ควรดูประกาศกรมอุตุนิยมวิทยาประกอบ" + foot)
         state["rain3"]["lvl"] = curr3
     slot = due_summary_slot(state, now)
     if slot:
-        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, "สรุปประจำเวลา"))
+        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, "สรุปประจำเวลา", tmd=tmd, tmd_err=tmd_err))
         state["summary_sent"][slot] = int(now)
         for k in sorted(state["summary_sent"])[:-6]:   # เก็บแค่ 6 รายการล่าสุด
             state["summary_sent"].pop(k, None)
