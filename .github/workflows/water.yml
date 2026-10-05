@@ -52,6 +52,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TMD_TOKEN: ${{ secrets.TMD_TOKEN }}
           MODE: ${{ github.event.inputs.mode }}
         run: |
           ARGS=""
