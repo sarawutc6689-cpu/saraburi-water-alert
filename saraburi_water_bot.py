@@ -145,9 +145,11 @@ def fmt_dam(d, err=None):
         return f"🏞 <b>เขื่อนป่าสักชลสิทธิ์</b>\n⚠️ ดึงข้อมูลไม่สำเร็จ: {html.escape(str(err or ''))}"
     pct = f" ({d['pct']:.0f}% ของความจุเก็บกัก)" if d["pct"] is not None else ""
     cap = f" / {d['capacity']:.0f}" if d["capacity"] is not None else ""
+    carried = (f"\n⚠️ วันที่ {html.escape(d.get('today') or 'วันนี้')} กรมชลประทานยังไม่อัปเดตตัวเลข "
+               "แสดงค่าล่าสุดที่มีแทน" if d.get("carried") else "")
     return (f"🏞 <b>{html.escape(d['name'])}</b>\nน้ำในเขื่อน {_num(d['volume'])}{cap} ล้าน ลบ.ม.{pct}\n"
             f"ไหลเข้า {_num(d['inflow'])} | ระบาย {_num(d['outflow'])} (หน่วยตามกรมชลประทาน)\n"
-            f"ข้อมูลวันที่ {html.escape(d['date'])}")
+            f"ข้อมูลวันที่ {html.escape(d['date'])}{carried}")
 
 
 def next_level(value, levels, prev, rearm):
@@ -654,6 +656,14 @@ def main():
         state = {"levels": state}
     for k in ("hist", "flags", "dam", "rama6", "up", "rain", "rain3"):
         state.setdefault(k, {})
+    # RID ออกแถวของวันใหม่แต่ยังไม่กรอกตัวเลข (ค่าว่างหมด) -> แสดงค่าจริงล่าสุดแทน พร้อมป้ายเตือน
+    dam_show = dam
+    if dam and all(dam[k] is None for k in ("pct", "volume", "inflow", "outflow")):
+        last = state["dam"].get("last")
+        if last:
+            dam_show = {**last, "carried": True, "today": dam["date"]}
+    elif dam:
+        state["dam"]["last"] = dam
     alerts, cleared, rises, stales, fresh = [], [], [], [], []
     for s_ in stations:
         sid = s_["id"]
@@ -703,11 +713,11 @@ def main():
             h6 = h6 + [[r6["ts"], r6["discharge"]]]
         r6["hist"] = h6
 
-    write_site(stations, dam, now, dam_err, r6, r6_err,
+    write_site(stations, dam_show, now, dam_err, r6, r6_err,
                extra={"upstream": up, "upstream_error": up_err, "rain": rain, "rain_error": rain_err, "tmd": tmd, "tmd_error": tmd_err})
 
     if "--summary" in sys.argv:
-        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, tmd=tmd, tmd_err=tmd_err))
+        send_telegram(summary_text(stations, dam_show, dam_err, r6, r6_err, up, up_err, rain, rain_err, tmd=tmd, tmd_err=tmd_err))
         save_state(state)
         return
 
@@ -831,7 +841,7 @@ def main():
         state["rain3"]["lvl"] = curr3
     slot = due_summary_slot(state, now)
     if slot:
-        send_telegram(summary_text(stations, dam, dam_err, r6, r6_err, up, up_err, rain, rain_err, "สรุปประจำเวลา", tmd=tmd, tmd_err=tmd_err))
+        send_telegram(summary_text(stations, dam_show, dam_err, r6, r6_err, up, up_err, rain, rain_err, "สรุปประจำเวลา", tmd=tmd, tmd_err=tmd_err))
         state["summary_sent"][slot] = int(now)
         for k in sorted(state["summary_sent"])[:-6]:   # เก็บแค่ 6 รายการล่าสุด
             state["summary_sent"].pop(k, None)
