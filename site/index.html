@@ -68,7 +68,7 @@ function damCard(d,err){
   <div class="bar"><i style="width:${Math.min(100,d.pct||0)}%"></i></div>
   <div class="mut">น้ำในเขื่อน ${f(d.volume,0)} / ${f(d.capacity,0)} ล้าน ลบ.ม.</div>
   <div class="mut">ไหลเข้า ${f(d.inflow)} · ระบาย ${f(d.outflow)}</div>
-  <div class="mut">ข้อมูลวันที่ ${esc(d.date)}</div></div>`;
+  <div class="mut">ข้อมูลวันที่ ${esc(d.date)}</div>${d.carried?`<div class="warn">⚠️ วันที่ ${esc(d.today||"วันนี้")} กรมชลประทานยังไม่อัปเดตตัวเลข แสดงค่าล่าสุดที่มีแทน</div>`:""}</div>`;
 }
 // เกณฑ์อัตราไหล (ลบ.ม./วิ) ต้องตรงกับ RAMA6_Q_LEVELS ในบอท
 function rama6Card(r,err){
