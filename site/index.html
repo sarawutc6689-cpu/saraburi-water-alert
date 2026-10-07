@@ -106,12 +106,60 @@ footer{
 footer a{color:var(--accent);text-decoration:none}
 footer a:hover{text-decoration:underline}
 
+/* QR Float Popup */
+.qr-float{
+  position:fixed;right:20px;bottom:20px;z-index:9999;
+  width:200px;background:var(--card);
+  border:2px solid var(--accent);border-radius:16px;
+  padding:12px;box-shadow:0 8px 24px rgba(37,99,235,.35);
+  text-align:center;
+  animation:qr-pulse 2s ease-in-out infinite;
+  transition:transform .2s ease;
+}
+.qr-float:hover{transform:scale(1.05);animation-play-state:paused}
+.qr-float img{
+  width:100%;height:auto;display:block;border-radius:8px;
+  background:#fff;padding:4px;
+}
+.qr-float .qr-label{
+  font-size:.78rem;font-weight:700;color:var(--accent);
+  margin-top:8px;display:flex;align-items:center;justify-content:center;gap:4px;
+}
+.qr-float .qr-sub{
+  font-size:.68rem;color:var(--mut);margin-top:2px;
+}
+.qr-close{
+  position:absolute;top:-10px;right:-10px;
+  width:26px;height:26px;border-radius:50%;
+  background:#dc2626;color:#fff;border:2px solid var(--card);
+  font-size:16px;font-weight:700;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  padding:0;box-shadow:0 2px 6px rgba(0,0,0,.25);
+}
+.qr-close:hover{background:#b91c1c;transform:scale(1.1)}
+
+@keyframes qr-pulse{
+  0%,100%{
+    box-shadow:0 8px 24px rgba(37,99,235,.35),0 0 0 0 rgba(37,99,235,.5);
+    transform:scale(1);
+  }
+  50%{
+    box-shadow:0 8px 24px rgba(37,99,235,.5),0 0 0 12px rgba(37,99,235,0);
+    transform:scale(1.03);
+  }
+}
+
 /* Responsive */
 @media(max-width:480px){
   .header h1{font-size:1.3rem}
   .grid{grid-template-columns:1fr}
   #map{height:280px}
   .big{font-size:1.5rem}
+  .qr-float{
+    width:130px;right:12px;bottom:12px;padding:8px;
+  }
+  .qr-float .qr-label{font-size:.68rem}
+  .qr-float .qr-sub{font-size:.6rem}
 }
 
 /* Chart card full width */
@@ -147,6 +195,16 @@ footer a:hover{text-decoration:underline}
     <p style="margin-top:8px">สร้างขึ้นเพื่อใช้ส่วนตัวเท่านั้น · พัฒนาโดย น้องตั้มน่ารัก</p>
   </footer>
 </main>
+
+<!-- QR Code Float Popup -->
+<div class="qr-float" id="qrFloat">
+  <button class="qr-close" onclick="document.getElementById('qrFloat').style.display='none'" aria-label="ปิด">×</button>
+  <a href="https://t.me/your_group_link" target="_blank" rel="noopener">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://t.me/your_group_link" alt="QR Code เข้ากลุ่ม Telegram">
+  </a>
+  <div class="qr-label">📱 สแกนเข้ากลุ่ม Telegram</div>
+  <div class="qr-sub">แจ้งเตือนระดับน้ำแบบเรียลไทม์</div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
