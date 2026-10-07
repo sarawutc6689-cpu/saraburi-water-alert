@@ -17,6 +17,7 @@ cron ตัวอย่าง (ทุก 15 นาที):
 import html
 import json
 import os
+import re
 import sys
 import time
 
@@ -547,7 +548,12 @@ def fmt_station(s, with_time=True):
     return "\n".join(lines)
 
 
+FAILED_SENDS = []   # ข้อความที่ส่ง Telegram ไม่สำเร็จในรอบนี้ (ไม่ทำให้บอตล้มกลางทาง แต่รอบจะขึ้นแดงตอนจบ)
+
+
 def send_telegram(text):
+    """ส่ง Telegram โดยไม่โยน error: ลอง HTML ก่อน ถ้าถูกปฏิเสธ (เช่น แท็กพัง) ลองส่งแบบข้อความล้วนอีกครั้ง
+    ถ้ายังไม่ได้ จดไว้ใน FAILED_SENDS แล้วทำงานต่อ เพื่อไม่ให้การส่งพังรอบเดียวบล็อกเว็บและการเตือนอื่นทั้งหมด"""
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -561,13 +567,32 @@ def send_telegram(text):
     if cur.strip():
         chunks.append(cur)
     for c in chunks:
-        r = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": c.strip(), "parse_mode": "HTML",
-                  "disable_web_page_preview": True},
-            timeout=30,
-        )
-        r.raise_for_status()
+        c = c.strip()
+        if not c:
+            continue
+        plain = html.unescape(re.sub(r"<[^>]+>", "", c))
+        ok = False
+        for mode, body in (("HTML", c), (None, plain)):
+            payload = {"chat_id": chat_id, "text": body[:4096], "disable_web_page_preview": True}
+            if mode:
+                payload["parse_mode"] = mode
+            try:
+                r = requests.post(url, json=payload, timeout=30)
+                if r.status_code < 400:
+                    ok = True
+                    break
+                print(f"Telegram ตอบ {r.status_code} ({mode or 'ข้อความล้วน'}): {r.text[:200]}", file=sys.stderr)
+                if r.status_code == 429:
+                    try:
+                        time.sleep(min(int(r.json().get("parameters", {}).get("retry_after", 5)), 10))
+                    except Exception:
+                        time.sleep(5)
+                elif r.status_code in (401, 403, 404):
+                    break   # token/chat ผิดหรือบอตถูกบล็อก ลองรูปแบบอื่นก็ไม่ช่วย
+            except Exception as e:
+                print(f"ส่ง Telegram ไม่สำเร็จ ({mode or 'ข้อความล้วน'}): {type(e).__name__}: {e}", file=sys.stderr)
+        if not ok:
+            FAILED_SENDS.append(plain[:60])
 
 
 def load_state():
@@ -851,3 +876,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    if FAILED_SENDS:   # ถึงตรงนี้แปลว่าเว็บและสถานะถูกบันทึกแล้ว แต่ให้รอบขึ้นแดงเพื่อให้เห็นว่า Telegram มีปัญหา
+        print(f"⚠️ ส่ง Telegram ไม่สำเร็จ {len(FAILED_SENDS)} ข้อความ: {FAILED_SENDS}", file=sys.stderr)
+        sys.exit(1)
