@@ -49,6 +49,8 @@ jobs:
             water-state-
 
       - name: Run bot
+        id: bot
+        continue-on-error: true   # ให้ขั้นตอนเผยแพร่เว็บทำงานต่อแม้บอตมีปัญหาบางส่วน (ท้ายไฟล์จะทำให้รอบขึ้นแดง)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -61,10 +63,16 @@ jobs:
           python saraburi_water_bot.py $ARGS
 
       - uses: actions/configure-pages@v6
-        if: github.event.inputs.mode != 'debug'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'debug' && hashFiles('site/data.json') != '' }}
       - uses: actions/upload-pages-artifact@v5
-        if: github.event.inputs.mode != 'debug'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'debug' && hashFiles('site/data.json') != '' }}
         with:
           path: site
       - uses: actions/deploy-pages@v5
-        if: github.event.inputs.mode != 'debug'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'debug' && hashFiles('site/data.json') != '' }}
+
+      - name: Mark run failed if bot failed
+        if: ${{ steps.bot.outcome == 'failure' }}
+        run: |
+          echo "บอตจบด้วย error (ดูล็อกของขั้น Run bot)"
+          exit 1
