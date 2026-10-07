@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ระดับน้ำ จ.สระบุรี</title>
+<style>
+:root{
+  --bg:#f0f2f5;--fg:#1a1d21;--card:#fff;--mut:#6b7280;--bd:#e5e7eb;
+  --accent:#2563eb;--shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
+  --radius:12px;
+}
+@media(prefers-color-scheme:dark){
+  :root{--bg:#0f1117;--fg:#e5e7eb;--card:#1a1d27;--mut:#9ca3af;--bd:#2d3340;
+        --shadow:0 1px 3px rgba(0,0,0,.3),0 1px 2px rgba(0,0,0,.2);}
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.6 system-ui,-apple-system,"Noto Sans Thai",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+main{max-width:1000px;margin:auto;padding:20px 16px 40px}
+
+/* Header */
+.header{text-align:center;margin-bottom:24px}
+.header h1{
+  font-size:1.6rem;margin:0;font-weight:700;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.header .sub{
+  color:var(--mut);font-size:.85rem;margin-top:6px;
+  display:inline-flex;align-items:center;gap:6px;
+  background:var(--card);padding:4px 12px;border-radius:99px;
+  border:1px solid var(--bd);
+}
+.dot-live{
+  width:8px;height:8px;border-radius:50%;background:#22c55e;
+  animation:pulse 2s infinite;
+}
+@keyframes pulse{
+  0%,100%{opacity:1;transform:scale(1)}
+  50%{opacity:.5;transform:scale(1.3)}
+}
+
+/* Map */
+#map{
+  height:360px;border-radius:var(--radius);border:1px solid var(--bd);
+  margin-bottom:8px;box-shadow:var(--shadow);overflow:hidden;
+}
+.legend{
+  display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.78rem;color:var(--mut);
+  margin-bottom:16px;padding:0 4px;
+}
+.legend span{display:inline-flex;align-items:center;gap:4px}
+.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
+
+/* Grid */
+.grid{
+  display:grid;gap:14px;
+  grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+}
+
+/* Card */
+.card{
+  background:var(--card);border:1px solid var(--bd);
+  border-radius:var(--radius);padding:16px;
+  box-shadow:var(--shadow);
+  border-left:5px solid var(--c,#999);
+  transition:transform .15s ease,box-shadow .15s ease;
+  position:relative;overflow:hidden;
+}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.card h2{
+  font-size:.95rem;margin:0 0 4px;font-weight:600;
+  display:flex;align-items:center;gap:6px;
+}
+.loc,.mut{color:var(--mut);font-size:.82rem;line-height:1.5}
+.big{font-size:1.7rem;font-weight:700;letter-spacing:-.02em}
+.tag{
+  display:inline-block;padding:2px 10px;border-radius:99px;
+  font-size:.72rem;font-weight:600;color:#fff;background:var(--c,#999);
+  letter-spacing:.01em;
+}
+.warn{color:#dc2626;font-size:.82rem;font-weight:500;margin-top:4px}
+
+/* Bar */
+.bar{
+  height:6px;background:var(--bd);border-radius:3px;margin:8px 0;
+  overflow:hidden;
+}
+.bar i{
+  display:block;height:100%;border-radius:3px;background:var(--c,#999);
+  transition:width .6s ease;
+}
+
+/* Sparkline */
+svg.spark{width:100%;height:32px;display:block;margin-top:4px}
+
+/* Footer */
+footer{
+  text-align:center;color:var(--mut);font-size:.78rem;
+  margin-top:32px;padding-top:20px;border-top:1px solid var(--bd);
+  line-height:1.8;
+}
+footer a{color:var(--accent);text-decoration:none}
+footer a:hover{text-decoration:underline}
+
+/* QR Float Popup */
+.qr-float{
+  position:fixed;right:20px;bottom:20px;z-index:9999;
+  width:200px;background:var(--card);
+  border:2px solid var(--accent);border-radius:16px;
+  padding:12px;box-shadow:0 8px 24px rgba(37,99,235,.35);
+  text-align:center;
+  animation:qr-pulse 2s ease-in-out infinite;
+  transition:transform .2s ease;
+}
+.qr-float:hover{transform:scale(1.05);animation-play-state:paused}
+.qr-float img{
+  width:100%;height:auto;display:block;border-radius:8px;
+  background:#fff;padding:4px;
+}
+.qr-float .qr-label{
+  font-size:.78rem;font-weight:700;color:var(--accent);
+  margin-top:8px;display:flex;align-items:center;justify-content:center;gap:4px;
+}
+.qr-float .qr-sub{
+  font-size:.68rem;color:var(--mut);margin-top:2px;
+}
+.qr-close{
+  position:absolute;top:-10px;right:-10px;
+  width:26px;height:26px;border-radius:50%;
+  background:#dc2626;color:#fff;border:2px solid var(--card);
+  font-size:16px;font-weight:700;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  padding:0;box-shadow:0 2px 6px rgba(0,0,0,.25);
+}
+.qr-close:hover{background:#b91c1c;transform:scale(1.1)}
+
+@keyframes qr-pulse{
+  0%,100%{
+    box-shadow:0 8px 24px rgba(37,99,235,.35),0 0 0 0 rgba(37,99,235,.5);
+    transform:scale(1);
+  }
+  50%{
+    box-shadow:0 8px 24px rgba(37,99,235,.5),0 0 0 12px rgba(37,99,235,0);
+    transform:scale(1.03);
+  }
+}
+
+/* Responsive */
+@media(max-width:480px){
+  .header h1{font-size:1.3rem}
+  .grid{grid-template-columns:1fr}
+  #map{height:280px}
+  .big{font-size:1.5rem}
+  .qr-float{
+    width:130px;right:12px;bottom:12px;padding:8px;
+  }
+  .qr-float .qr-label{font-size:.68rem}
+  .qr-float .qr-sub{font-size:.6rem}
+}
+
+/* Chart card full width */
+.card.full{grid-column:1/-1}
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+</head>
+<body>
+<main>
+  <div class="header">
+    <h1>🌊 ระดับน้ำ จ.สระบุรี</h1>
+    <div class="sub" id="upd">
+      <span class="dot-live"></span> กำลังโหลด…
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <div class="legend">
+    <span><i style="background:#8d6e63"></i> น้ำน้อยวิกฤติ</span>
+    <span><i style="background:#d4a72c"></i> น้ำน้อย</span>
+    <span><i style="background:#2da44e"></i> ปกติ</span>
+    <span><i style="background:#0969da"></i> น้ำมาก</span>
+    <span><i style="background:#cf222e"></i> ล้นตลิ่ง</span>
+    <span>· จุดใหญ่ = ท้ายเขื่อนพระราม 6</span>
+    <span>· © OpenStreetMap</span>
+  </div>
+
+  <div class="grid" id="g"></div>
+
+  <footer>
+    <p>ข้อมูลอัตโนมัติจาก ThaiWater (สสน.) และกรมชลประทาน · ไม่ใช่ประกาศทางการ</p>
+    <p>โปรดติดตาม <a href="https://www.thaiwater.net" target="_blank" rel="noopener">ThaiWater</a> หรือ <a href="https://www.disaster.go.th" target="_blank" rel="noopener">ปภ.</a> โดยตรง</p>
+    <p style="margin-top:8px">สร้างขึ้นเพื่อใช้ส่วนตัวเท่านั้น · พัฒนาโดย น้องตั้มน่ารัก</p>
+  </footer>
+</main>
+
+<!-- QR Code Float Popup -->
+<div class="qr-float" id="qrFloat">
+  <button class="qr-close" onclick="document.getElementById('qrFloat').style.display='none'" aria-label="ปิด">×</button>
+  <a href="https://t.me/your_group_link" target="_blank" rel="noopener">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=https://t.me/your_group_link" alt="QR Code เข้ากลุ่ม Telegram">
+  </a>
+  <div class="qr-label">📱 สแกนเข้ากลุ่ม Telegram</div>
+  <div class="qr-sub">แจ้งเตือนระดับน้ำแบบเรียลไทม์</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const C={1:"#8d6e63",2:"#d4a72c",3:"#2da44e",4:"#0969da",5:"#cf222e"};
+const LBL={1:"น้ำน้อยวิกฤติ",2:"น้ำน้อย",3:"ปกติ",4:"น้ำมาก",5:"ล้นตลิ่ง"};
+const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const f=(v,d=2)=>v==null?"-":Number(v).toFixed(d);
+
+function spark(h,c){
+  if(!h||h.length<2)return"";
+  const x0=h[0][0],xs=h[h.length-1][0]-x0||1,ys=h.map(p=>p[1]),lo=Math.min(...ys),hi=Math.max(...ys),r=hi-lo||1;
+  const pts=h.map(p=>`${((p[0]-x0)/xs*300).toFixed(1)},${(34-(p[1]-lo)/r*32).toFixed(1)}`).join(" ");
+  return`<svg class="spark" viewBox="0 0 300 36" preserveAspectRatio="none"><polyline fill="none" stroke="${c}" stroke-width="2" points="${pts}"/></svg>`;
+}
+
+function card(s){
+  const c=C[s.level]||"#999",gap=s.bank&&s.wl!=null?s.bank-s.wl:null;
+  const pct=s.pct==null?"":Math.min(100,s.pct);
+  return`<div class="card" style="--c:${c}"><h2>${esc(s.name)}</h2>
+  <div class="loc">${esc([s.river,s.amphoe&&"อ."+s.amphoe].filter(Boolean).join(" "))}</div>
+  <div style="margin:6px 0"><span class="big">${f(s.wl)}</span> <span class="mut">ม.รทก.</span> <span class="tag">${LBL[s.level]||"ไม่ทราบ"}</span></div>
+  ${pct!==""?`<div class="bar"><i style="width:${pct}%"></i></div>`:""}
+  <div class="mut">ตลิ่ง ${f(s.bank)} ม.${gap==null?"":gap>=0?` · ต่ำกว่า ${f(gap)} ม.`:` · สูงกว่า ${f(-gap)} ม.`}${s.pct!=null?` · ${f(s.pct,0)}%`:""}</div>
+  <div class="mut">3 ชม.ที่ผ่านมา: ${s.rise==null?"-":(s.rise>0?"+":"")+f(s.rise)+" ม."}</div>
+  ${spark(s.hist,c)}
+  <div class="mut">ข้อมูลเมื่อ ${esc(s.time)}</div>
+  ${s.stale?'<div class="warn">⏱ ข้อมูลไม่อัปเดตนาน</div>':""}</div>`;
+}
+
+function damCard(d,err){
+  if(!d)return`<div class="card"><h2>🏞 เขื่อนป่าสักชลสิทธิ์</h2><div class="warn">⚠️ ดึงข้อมูลไม่สำเร็จ${err?": "+esc(err):""}</div></div>`;
+  const c=d.pct>=110?"#82071e":d.pct>=100?C[5]:d.pct>=90?"#bc4c00":d.pct>=70?C[4]:C[3];
+  const lab=d.pct>=110?"วิกฤตมาก":d.pct>=100?"วิกฤต":d.pct>=90?"เฝ้าระวัง":"";
+  return`<div class="card" style="--c:${c}"><h2>🏞 ${esc(d.name)}</h2>
+  <div style="margin:6px 0"><span class="big">${f(d.pct,0)}%</span> <span class="mut">ของความจุเก็บกัก</span> ${lab?`<span class="tag">${lab}</span>`:""}</div>
+  <div class="bar"><i style="width:${Math.min(100,d.pct||0)}%"></i></div>
+  <div class="mut">น้ำในเขื่อน ${f(d.volume,0)} / ${f(d.capacity,0)} ล้าน ลบ.ม.</div>
+  <div class="mut">ไหลเข้า ${f(d.inflow)} · ระบาย ${f(d.outflow)}</div>
+  <div class="mut">ข้อมูลวันที่ ${esc(d.date)}</div>${d.carried?`<div class="warn">⚠️ วันที่ ${esc(d.today||"วันนี้")} กรมชลประทานยังไม่อัปเดตตัวเลข แสดงค่าล่าสุดที่มีแทน</div>`:""}</div>`;
+}
+
+function rama6Card(r,err){
+  if(!r)return`<div class="card"><h2>🚧 เขื่อนพระราม 6 (ท้ายเขื่อน)</h2><div class="warn">⚠️ ดึงข้อมูลไม่สำเร็จ${err?": "+esc(err):""}</div></div>`;
+  const q=r.discharge,crit=r.crit!=null&&r.wl!=null&&r.wl>=r.crit;
+  const lv=crit||q>=700?["#cf222e","ระบายน้ำสูงมาก"]:q>=600?["#bc4c00","ระบายน้ำมาก"]:q>=400?["#d4a72c","ระบายน้ำสูง"]:["#2da44e","ปกติ"];
+  const pct=r.qmax&&q!=null?Math.min(100,q/r.qmax*100):"";
+  const gap=r.bank&&r.wl!=null?r.bank-r.wl:null;
+  return`<div class="card" style="--c:${lv[0]}"><h2>🚧 เขื่อนพระราม 6 (ท้ายเขื่อน S.26)</h2>
+  <div class="loc">แม่น้ำป่าสัก อ.ท่าเรือ จ.พระนครศรีอยุธยา</div>
+  <div style="margin:6px 0"><span class="big">${f(q,0)}</span> <span class="mut">ลบ.ม./วิ</span> <span class="tag">${lv[1]}</span></div>
+  ${pct!==""?`<div class="bar"><i style="width:${pct}%"></i></div>`:""}
+  <div class="mut">${r.qmax?`ความจุลำน้ำ ~${f(r.qmax,0)} ลบ.ม./วิ · `:""}ระดับน้ำ ${f(r.wl)} ม.รทก.</div>
+  <div class="mut">ตลิ่ง ${f(r.bank)} ม.${gap==null?"":gap>=0?` · ต่ำกว่า ${f(gap)} ม.`:` · สูงกว่า ${f(-gap)} ม.`}${r.crit!=null?` · วิกฤต ${f(r.crit)} ม.`:""}</div>
+  <div class="mut">ข้อมูลเมื่อ ${esc(r.time)}</div>
+  ${r.stale?'<div class="warn">⏱ ข้อมูลไม่อัปเดตนาน ตัวเลขอาจไม่ใช่สถานการณ์ปัจจุบัน</div>':""}</div>`;
+}
+
+function upCard(us){
+  const rows=us.map(s=>{const c=C[s.level]||"#999";return`<div style="margin:8px 0"><b>${esc(s.name)}</b> <span class="tag" style="--c:${c}">${LBL[s.level]||"?"}</span><div class="mut">${esc(s.loc)} · ${f(s.wl)} ม.รทก. · ${s.rise==null?"-":(s.rise>0?"+":"")+f(s.rise)} ม./6 ชม. · ถึงเขื่อนป่าสักฯ ${esc(s.lag)} (ประมาณ)</div></div>`}).join("");
+  return`<div class="card" style="--c:${C[4]}"><h2>⛰ ต้นน้ำป่าสัก (เพชรบูรณ์)</h2>${rows}</div>`;
+}
+
+function rainCard(r,t){
+  r=r||{};const days=(r.days||[]).filter(x=>x.date>=r.today),n3=r.next3,tn=t&&t.next3;
+  const mm3=Math.max(n3?n3.mm:0,tn?tn.mm:0);
+  const mx=Math.max(0,...days.map(x=>x.max)),c3=mm3>=60?C[5]:mm3>=30?"#bc4c00":0;
+  const c=c3===C[5]||mx>=90?C[5]:c3||mx>=35?"#bc4c00":mx>=10?C[4]:C[3];
+  const h3=(tn?`<div class="mut">⏱ ${tn.hours} ชม.ข้างหน้า (กรมอุตุฯ TMD): <b>${f(tn.mm,0)}</b> มม. (${esc(tn.where)})</div>`:"")+(n3?`<div class="mut">⏱ ${n3.hours} ชม.ข้างหน้า (Open-Meteo): <b>${f(n3.mm,0)}</b> มม. (${esc(n3.where)})</div>`:"");
+  return`<div class="card" style="--c:${c}"><h2>🌧 พยากรณ์ฝน ลุ่มน้ำป่าสักตอนบน</h2>${h3}${days.map(x=>`<div class="mut">${esc(x.date)}: <b>${f(x.max,0)}</b> มม. (${esc(x.where)}) · เฉลี่ย ${f(x.avg,0)}${x.prob==null?"":" · โอกาสฝน "+f(x.prob,0)+"%"}</div>`).join("")}<div class="mut">รายวัน/3 ชม.จากแบบจำลอง Open-Meteo ไม่ใช่ประกาศกรมอุตุฯ${tn?" · ส่วน TMD คือพยากรณ์รายชั่วโมงของกรมอุตุฯ":""}</div></div>`;
+}
+
+let MAP,LAYER,FIT=false;
+const DAM_POS=null;
+function drawMap(d){
+  const LF=window.L;if(!LF||!document.getElementById("map"))return;
+  if(!MAP){MAP=LF.map("map",{scrollWheelZoom:false});LF.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:17,attribution:"© OpenStreetMap"}).addTo(MAP);LAYER=LF.layerGroup().addTo(MAP);}
+  LAYER.clearLayers();const pts=[];
+  const add=(lat,lon,c,r,html)=>{if(lat==null||lon==null)return;pts.push([lat,lon]);LF.circleMarker([lat,lon],{radius:r,color:"#fff",weight:2,fillColor:c,fillOpacity:.9}).bindPopup(html).addTo(LAYER);};
+  d.stations.forEach(s=>add(s.lat,s.lon,C[s.level]||"#999",8,`<b>${esc(s.name)}</b><br>${f(s.wl)} ม.รทก. · ${LBL[s.level]||"ไม่ทราบ"}`));
+  (d.upstream||[]).forEach(s=>add(s.lat,s.lon,C[s.level]||"#999",8,`<b>${esc(s.name)}</b> (ต้นน้ำ)<br>${f(s.wl)} ม.รทก. · ${LBL[s.level]||"ไม่ทราบ"}`));
+  const r=d.rama6;if(r)add(r.lat,r.lon,C[r.level]||"#999",13,`<b>ท้ายเขื่อนพระราม 6</b><br>${f(r.discharge,0)} ลบ.ม./วิ · ${f(r.wl)} ม.รทก.`);
+  if(DAM_POS&&d.dam)add(DAM_POS[0],DAM_POS[1],d.dam.pct>=100?C[5]:d.dam.pct>=90?"#bc4c00":C[3],13,`<b>${esc(d.dam.name)}</b><br>${f(d.dam.pct,0)}% ของความจุเก็บกัก`);
+  if(pts.length&&!FIT){MAP.fitBounds(pts,{padding:[30,30]});FIT=true;}
+}
+
+function chartCard(title,series,lines,unit,dec){
+  const W=600,H=220,ml=46,mr=10,mt=10,mb=26,all=series.flatMap(s=>s.pts);
+  const xs=all.map(p=>p[0]),ys=all.map(p=>p[1]).concat(lines.map(l=>l.y));
+  const x0=Math.min(...xs),x1=Math.max(...xs);let y0=Math.min(...ys),y1=Math.max(...ys);
+  if(y1==y0){y1+=1;y0-=1}const pd=(y1-y0)*.08;y0-=pd;y1+=pd;
+  const X=t=>ml+(t-x0)/((x1-x0)||1)*(W-ml-mr),Y=v=>mt+(1-(v-y0)/(y1-y0))*(H-mt-mb);
+  const tm=t=>new Date(t*1000).toLocaleString("th-TH",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  const tx=(x,y,a,t,fill,op)=>`<text x="${x}" y="${y}" text-anchor="${a}" font-size="11" fill="${fill||"currentColor"}" opacity="${op||.7}">${t}</text>`;
+  let g="";
+  for(let i=0;i<=4;i++){const v=y0+(y1-y0)*i/4;g+=`<line x1="${ml}" x2="${W-mr}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--bd)"/>`+tx(ml-4,Y(v)+4,"end",f(v,dec));}
+  lines.forEach(l=>{g+=`<line x1="${ml}" x2="${W-mr}" y1="${Y(l.y)}" y2="${Y(l.y)}" stroke="${l.color}" stroke-dasharray="5 4"/>`+tx(W-mr,Y(l.y)-3,"end",esc(l.label),l.color,1);});
+  series.forEach(s=>{g+=`<polyline fill="none" stroke="${s.color}" stroke-width="2" points="${s.pts.map(p=>X(p[0]).toFixed(1)+","+Y(p[1]).toFixed(1)).join(" ")}"><title>${esc(s.name)}</title></polyline>`;});
+  g+=tx(ml,H-6,"start",tm(x0))+tx(W-mr,H-6,"end",tm(x1));
+  const lg=series.map(s=>`<span style="margin-right:12px;white-space:nowrap"><i style="display:inline-block;width:10px;height:10px;background:${s.color};border-radius:2px"></i> ${esc(s.name)} <b>${f(s.pts[s.pts.length-1][1],dec)}</b></span>`).join("");
+  return`<div class="card full" style="--c:#999"><h2>📈 ${esc(title)}</h2><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${g}</svg><div class="mut">${lg} ${esc(unit)}</div></div>`;
+}
+
+function trends(d){
+  try{
+    const pal=["#0969da","#2da44e","#bc4c00","#8250df","#cf222e","#6e7781"],ok=a=>a&&a.length>1;let out="";
+    const st=d.stations.filter(s=>s.bank&&ok(s.hist));
+    if(st.length)out+=chartCard("ระดับน้ำเทียบตลิ่ง จ.สระบุรี (48 ชม.) · 0 = ระดับตลิ่ง, ค่าบวก = ล้นตลิ่ง",st.map((s,i)=>({name:s.name,color:pal[i%pal.length],pts:s.hist.map(p=>[p[0],p[1]-s.bank])})),[{y:0,label:"ตลิ่ง",color:"#cf222e"}],"ม.",2);
+    const r=d.rama6;
+    if(r&&ok(r.hist))out+=chartCard("อัตราไหลท้ายเขื่อนพระราม 6 (24 ชม.)",[{name:"อัตราไหล",color:"#0969da",pts:r.hist}],[{y:400,label:"400",color:"#d4a72c"},{y:600,label:"600",color:"#bc4c00"},{y:700,label:"700",color:"#cf222e"}],"ลบ.ม./วิ",0);
+    const up=(d.upstream||[]).filter(s=>ok(s.hist));
+    if(up.length)out+=chartCard("ต้นน้ำป่าสัก: ระดับน้ำที่เปลี่ยนไปจากจุดเริ่มต้น (24 ชม.)",up.map((s,i)=>({name:s.name,color:pal[i%pal.length],pts:s.hist.map(p=>[p[0],p[1]-s.hist[0][1]])})),[{y:0,label:"",color:"#8b949e"}],"ม.",2);
+    return out;
+  }catch(e){console.warn(e);return"";}
+}
+
+async function load(){
+  if(location.protocol==="file:"){
+    upd.innerHTML="⚠️ เปิดจากไฟล์ในเครื่องไม่ได้ ต้องเปิดผ่านลิงก์ GitHub Pages";
+    return;
+  }
+  let step="ดึงไฟล์ data.json";
+  try{
+    const r=await fetch("data.json?t="+Date.now(),{cache:"no-store"});
+    if(!r.ok)throw new Error(r.status===404
+      ?"ไม่พบไฟล์ data.json (404) — บอทยังไม่เคยรันสำเร็จจนเขียนไฟล์นี้"
+      :"เซิร์ฟเวอร์ตอบ HTTP "+r.status);
+    step="อ่านรูปแบบข้อมูล";
+    const d=await r.json();
+    step="แสดงผล";
+    const st=[...d.stations].sort((a,b)=>(b.level||0)-(a.level||0));
+    const has6=d.rama6||d.rama6_error;
+    g.innerHTML=st.map(card).join("")+damCard(d.dam,d.dam_error)+(has6?rama6Card(d.rama6,d.rama6_error):"")+(d.upstream&&d.upstream.length?upCard(d.upstream):"")+((d.rain||d.tmd)?rainCard(d.rain,d.tmd):"");
+    try{drawMap(d)}catch(e){console.warn(e)}
+    g.insertAdjacentHTML("beforeend",trends(d));
+    const ageMin=Math.round((Date.now()/1000-d.updated)/60);
+    upd.innerHTML=`<span class="dot-live"></span> อัปเดตล่าสุด ${new Date(d.updated*1000).toLocaleString("th-TH")} · รีเฟรชอัตโนมัติ`;
+    if(ageMin>45){
+      const t=ageMin>=120?Math.floor(ageMin/60)+" ชม.":ageMin+" นาที";
+      upd.innerHTML+=`<div class="warn" style="font-weight:600;margin-top:4px">⚠️ ข้อมูลบนหน้านี้เก่ากว่า ${t} — ระบบดึงข้อมูลอัตโนมัติอาจหยุดทำงาน อย่าใช้ตัวเลขนี้เป็นสถานการณ์ปัจจุบัน ตรวจที่ thaiwater.net หรือ ปภ. โดยตรง</div>`;
+    }
+  }catch(e){upd.textContent="⚠️ โหลดข้อมูลไม่สำเร็จ (ขั้น: "+step+") — "+(e&&e.message||e);}
+}
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
